@@ -1,0 +1,6 @@
+/kix
+/secrets/cache/
+*.test
+*.out
+
+test.age
