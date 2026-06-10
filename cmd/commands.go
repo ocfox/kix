@@ -126,6 +126,7 @@ func runDeploy(early bool) error {
 		return fmt.Errorf("decrypting secrets: %w", err)
 	}
 
+	var deployErrs []error
 	for _, s := range p.Secrets {
 		sec := s
 		plaintext, ok := plainMap[sec.ID]
@@ -148,9 +149,13 @@ func runDeploy(early bool) error {
 
 		if err := secure.DeployToFS(plaintext, &sec, dst); err != nil {
 			slog.Error("deploy failed", "secret", sec.ID, "error", err)
+			deployErrs = append(deployErrs, err)
 			continue
 		}
 		slog.Info("deployed", "secret", sec.ID, "path", dst)
+	}
+	if len(deployErrs) > 0 {
+		return fmt.Errorf("deploy completed with %d error(s)", len(deployErrs))
 	}
 
 	os.Remove(symlinkDst)
