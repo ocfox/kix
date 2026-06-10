@@ -361,7 +361,11 @@ func initGenerationDir(mountPoint string, early bool) (string, error) {
 		if err := os.MkdirAll(genBase, 0o751); err != nil {
 			return "", fmt.Errorf("creating %s: %w", genBase, err)
 		}
-		return filepath.Join(genBase, "0"), nil
+		genDir := filepath.Join(genBase, "0")
+		if err := os.MkdirAll(genDir, 0o751); err != nil {
+			return "", fmt.Errorf("creating generation dir: %w", err)
+		}
+		return genDir, nil
 	}
 
 	if err := os.MkdirAll(genBase, 0o751); err != nil {
