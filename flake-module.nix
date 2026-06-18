@@ -35,12 +35,11 @@ in
               default = "./secrets/cache";
               defaultText = lib.literalExpression "./secrets/cache";
             };
-            defaultSecretDirectory = mkOption {
-              type = types.addCheck types.str (s: (builtins.substring 0 1 s) == ".") // {
-                description = "path string relative to flake root";
-              };
-              default = "./secrets";
-              defaultText = lib.literalExpression "./secrets";
+            secretsDir = mkOption {
+              type = types.path;
+              default = self + "/secrets";
+              defaultText = lib.literalExpression ''inputs.self + "/secrets"'';
+              description = "Directory containing .age secret files.";
             };
             extraRecipients = mkOption {
               type = with types; listOf str;
