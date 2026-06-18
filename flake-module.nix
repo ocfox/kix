@@ -7,16 +7,13 @@ kixFlake:
   ...
 }:
 let
-  inherit (lib)
-    mkOption
-    types
-    ;
+  inherit (lib) mkOption types;
 in
 {
   options = {
     flake = flake-parts-lib.mkSubmoduleOptions {
       kix = mkOption {
-        type = types.submodule (submod: {
+        type = types.submodule (_: {
           options = {
             nodes = mkOption {
               type = types.lazyAttrsOf types.unspecified;
@@ -51,25 +48,41 @@ in
               readOnly = true;
               default = lib.mapAttrs (
                 system: config':
-                lib.genAttrs
-                  [
-                    "seal"
-                    "edit"
-                  ]
-                  (
-                    app:
-                    import ./apps/${app}.nix {
-                      inherit (config.flake.kix)
-                        nodes
-                        identity
-                        extraRecipients
-                        cache
-                        ;
-                      inherit lib;
-                      pkgs = config'.kix.pkgs;
-                      package = kixFlake.packages.${system}.default;
-                    }
-                  )
+                let
+                  pkgs = config'.kix.pkgs;
+                  package = kixFlake.packages.${system}.default;
+                  inherit (config.flake.kix) nodes identity extraRecipients cache;
+
+                  seal =
+                    let
+                      profilesArgs = lib.concatStringsSep " " (
+                        map (
+                          v:
+                          "--profile "
+                          + (pkgs.writeTextFile {
+                            name = "kix-material";
+                            text = builtins.toJSON {
+                              inherit (v.config.kix) beforeUserborn secrets settings;
+                            };
+                          })
+                        ) (lib.filter (v: v.config ? kix) (lib.attrValues nodes))
+                      );
+                    in
+                    pkgs.writeShellScriptBin "seal" ''
+                      ${lib.getExe package} ${profilesArgs} seal --identity ${identity} --cache ${cache}
+                    '';
+
+                  edit =
+                    let
+                      recipientsArg = lib.concatStringsSep " " (
+                        map (n: "--recipient ${n}") extraRecipients
+                      );
+                    in
+                    pkgs.writeShellScriptBin "edit-secret" ''
+                      ${lib.getExe package} edit --identity ${identity} ${recipientsArg} $1
+                    '';
+                in
+                { inherit seal edit; }
               ) config.allSystems;
             };
           };
@@ -79,11 +92,7 @@ in
     };
 
     perSystem = flake-parts-lib.mkPerSystemOption (
-      {
-        pkgs,
-        lib,
-        ...
-      }:
+      { pkgs, ... }:
       {
         options.kix.pkgs = mkOption {
           type = types.unspecified;
