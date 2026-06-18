@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/blake2b"
 
-	"github.com/ocfox/kix/identity"
 	"github.com/ocfox/kix/secure"
 )
 
@@ -38,7 +37,7 @@ func init() {
 func runEdit(file, identityPath string, recipients []string) error {
 	ui := terminalUI()
 
-	idents, err := identity.ParseIdentityFile(identityPath, ui)
+	idents, err := parseIdentityFile(identityPath, ui)
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
@@ -49,7 +48,7 @@ func runEdit(file, identityPath string, recipients []string) error {
 		recips = append(recips, r)
 	}
 	for _, r := range recipients {
-		recip, err := identity.ParseRecipient(r, ui)
+		recip, err := parseRecipient(r, ui)
 		if err != nil {
 			return fmt.Errorf("parsing recipient %q: %w", r, err)
 		}

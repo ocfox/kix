@@ -210,10 +210,7 @@ in
         pkgs.runCommandLocal "kix-seal-check-${config.networking.hostName}" { }
           "${lib.getExe cfg.package} -p ${profile} check > $out";
 
-      deployEnv = [
-        "CACHE=${cfg.settings.cacheInStore}"
-        "SEAL_CHECK=${checkSealedReport}"
-      ];
+      deployEnv = [ "SEAL_CHECK=${checkSealedReport}" ];
     in
     {
       assertions = [

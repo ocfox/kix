@@ -10,7 +10,6 @@ import (
 	"filippo.io/age"
 	"github.com/spf13/cobra"
 
-	"github.com/ocfox/kix/identity"
 	"github.com/ocfox/kix/profile"
 	"github.com/ocfox/kix/secure"
 )
@@ -38,7 +37,7 @@ func init() {
 func runSeal(identityPath, cacheDir string) error {
 	slog.Info("sealing...")
 
-	idents, err := identity.ParseIdentityFile(identityPath, terminalUI())
+	idents, err := parseIdentityFile(identityPath, terminalUI())
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
@@ -134,7 +133,7 @@ func runSeal(identityPath, cacheDir string) error {
 	)
 
 	for hostID, secs := range missing {
-		recip, err := identity.ParseRecipient(hostPubkeys[hostID], nil)
+		recip, err := parseRecipient(hostPubkeys[hostID], nil)
 		if err != nil {
 			return fmt.Errorf("parsing host %q recipient: %w", hostID, err)
 		}
