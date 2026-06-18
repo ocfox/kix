@@ -7,7 +7,7 @@ import (
 )
 
 type Profile struct {
-	Settings       Settings         `json:"settings"`
+	Settings       Settings          `json:"settings"`
 	Secrets        map[string]Secret `json:"secrets"`
 	BeforeUserborn []string          `json:"beforeUserborn"`
 }
@@ -27,19 +27,12 @@ type HostKey struct {
 }
 
 type Secret struct {
-	File             string            `json:"file"`
-	Group            string            `json:"group"`
-	Mode             string            `json:"mode"`
-	Name             string            `json:"name"`
-	Owner            string            `json:"owner"`
-	Path             string            `json:"path"`
-	Insert           map[string]Insert `json:"insert"`
-	CleanPlaceholder bool              `json:"cleanPlaceholder"`
-}
-
-type Insert struct {
-	Order   uint32 `json:"order"`
-	Content string `json:"content"`
+	File  string `json:"file"`
+	Group string `json:"group"`
+	Mode  string `json:"mode"`
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
+	Path  string `json:"path"`
 }
 
 func LoadProfiles(paths []string) ([]*Profile, error) {

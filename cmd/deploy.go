@@ -110,9 +110,6 @@ func runDeploy(earlyMode bool) error {
 	var deployErrs []error
 	for id, s := range p.Secrets {
 		plaintext := plainMap[id]
-		if len(s.Insert) > 0 || s.CleanPlaceholder {
-			plaintext = secure.InsertContent(plaintext, s.Insert, s.CleanPlaceholder)
-		}
 
 		dst := filepath.Join(genDir, s.Name)
 		if s.Path != "" && s.Path != filepath.Join(symlinkDst, s.Name) {

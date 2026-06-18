@@ -2,14 +2,12 @@ package secure
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/user"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -57,91 +55,6 @@ func ParsePermissions(s string) (uint32, error) {
 		return 0, fmt.Errorf("parse permissions %q: %w", s, err)
 	}
 	return uint32(mode), nil
-}
-
-func ExtractHashes(input string) []string {
-	const (
-		prefix  = "{{ "
-		suffix  = " }}"
-		hashLen = 64
-		total   = len(prefix) + hashLen + len(suffix)
-	)
-
-	var result []string
-	for i := 0; i <= len(input)-total; i++ {
-		if input[i:i+len(prefix)] != prefix {
-			continue
-		}
-		hashStart := i + len(prefix)
-		hashEnd := hashStart + hashLen
-		if input[hashEnd:hashEnd+len(suffix)] != suffix {
-			continue
-		}
-		h := input[hashStart:hashEnd]
-		if !isHex(h) {
-			continue
-		}
-		result = append(result, h)
-		i = hashEnd + len(suffix) - 1
-	}
-	return result
-}
-
-func isHex(s string) bool {
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-func InsertContent(plaintext []byte, insSet map[string]profile.Insert, cleanAfterReplace bool) []byte {
-	hashes := ExtractHashes(string(plaintext))
-	if len(hashes) == 0 {
-		return plaintext
-	}
-
-	entries := make([]profile.Insert, 0, len(insSet))
-	for _, v := range insSet {
-		entries = append(entries, v)
-	}
-	slices.SortFunc(entries, func(a, b profile.Insert) int {
-		return cmp.Compare(a.Order, b.Order)
-	})
-
-	result := make([]byte, len(plaintext))
-	copy(result, plaintext)
-
-	replaced := make(map[string]bool)
-	for _, ins := range entries {
-		contentHash := hexHash(ins.Content)
-		for _, h := range hashes {
-			if h == contentHash {
-				placeholder := "{{ " + h + " }}"
-				result = bytes.ReplaceAll(result, []byte(placeholder), []byte(ins.Content))
-				replaced[h] = true
-				break
-			}
-		}
-	}
-
-	if cleanAfterReplace {
-		for _, h := range hashes {
-			if !replaced[h] {
-				placeholder := "{{ " + h + " }}"
-				result = bytes.ReplaceAll(result, []byte(placeholder), nil)
-			}
-		}
-	}
-
-	return result
-}
-
-func hexHash(content string) string {
-	h, _ := blake2b.New256(nil)
-	h.Write([]byte(content))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func DeployToFS(data []byte, secret *profile.Secret, dst string) error {

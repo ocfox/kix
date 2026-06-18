@@ -157,38 +157,6 @@ let
         description = "Group of the decrypted secret.";
       };
 
-      cleanPlaceholder = (lib.mkEnableOption { }) // {
-        description = "After insertion, clean remaining `{{ $32bytes_hex_str }}` placeholders.";
-      };
-
-      insert = mkOption {
-        type = types.attrsOf (
-          lib.types.submodule (submod: {
-            options = {
-              order = mkOption {
-                type = types.ints.u32;
-                default = 0;
-                description = "Insertion order (nix attrsets are unordered, set explicitly).";
-              };
-              content = mkOption {
-                type = types.str;
-                description = "Text to insert.";
-              };
-              _id = mkOption {
-                type =
-                  types.addCheck types.str (s: builtins.match "[0-9a-f]{64}" s != null)
-                  // {
-                    description = "${types.str.description} (with check: 32 bytes hex lowercase string)";
-                  };
-                default = submod.config._module.args.name;
-                readOnly = true;
-              };
-            };
-          })
-        );
-        default = { };
-        description = "Insert plain text into secret. See <https://milieuim.github.io/vaultix/advanced.html>.";
-      };
     };
   });
 in

@@ -42,9 +42,6 @@ func runEdit(file, identityPath string, recipients []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
-	if len(idents) == 0 {
-		return fmt.Errorf("no identities found in %q", identityPath)
-	}
 	masterID := idents[0]
 
 	var recips []age.Recipient
