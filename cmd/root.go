@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
+	"filippo.io/age/plugin"
 	"github.com/spf13/cobra"
 )
 
@@ -30,4 +32,11 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(checkCmd)
+}
+
+func terminalUI() *plugin.ClientUI {
+	return plugin.NewTerminalUI(
+		func(format string, v ...any) { fmt.Printf(format, v...) },
+		func(format string, v ...any) { fmt.Fprintf(os.Stderr, format, v...) },
+	)
 }

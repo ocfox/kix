@@ -2,16 +2,21 @@ package secure
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"os/user"
+	"slices"
+	"strconv"
+	"strings"
 
 	"filippo.io/age"
 	"golang.org/x/crypto/blake2b"
+	"golang.org/x/sys/unix"
 
-	"github.com/ocfox/kix/owner"
-	"github.com/ocfox/kix/parser"
 	"github.com/ocfox/kix/profile"
 )
 
@@ -45,17 +50,65 @@ func EncryptAge(plaintext []byte, recips ...age.Recipient) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func InsertContent(plaintext []byte, insSet profile.InsertSet, cleanAfterReplace bool) []byte {
-	hashes := parser.ExtractHashes(string(plaintext))
+func ParsePermissions(s string) (uint32, error) {
+	s = strings.TrimPrefix(s, "0")
+	mode, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse permissions %q: %w", s, err)
+	}
+	return uint32(mode), nil
+}
+
+func ExtractHashes(input string) []string {
+	const (
+		prefix  = "{{ "
+		suffix  = " }}"
+		hashLen = 64
+		total   = len(prefix) + hashLen + len(suffix)
+	)
+
+	var result []string
+	for i := 0; i <= len(input)-total; i++ {
+		if input[i:i+len(prefix)] != prefix {
+			continue
+		}
+		hashStart := i + len(prefix)
+		hashEnd := hashStart + hashLen
+		if input[hashEnd:hashEnd+len(suffix)] != suffix {
+			continue
+		}
+		h := input[hashStart:hashEnd]
+		if !isHex(h) {
+			continue
+		}
+		result = append(result, h)
+		i = hashEnd + len(suffix) - 1
+	}
+	return result
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func InsertContent(plaintext []byte, insSet map[string]profile.Insert, cleanAfterReplace bool) []byte {
+	hashes := ExtractHashes(string(plaintext))
 	if len(hashes) == 0 {
 		return plaintext
 	}
 
-	entries := make([]profile.Insert, 0, len(insSet.Entries))
-	for _, v := range insSet.Entries {
+	entries := make([]profile.Insert, 0, len(insSet))
+	for _, v := range insSet {
 		entries = append(entries, v)
 	}
-	sortInserts(entries)
+	slices.SortFunc(entries, func(a, b profile.Insert) int {
+		return cmp.Compare(a.Order, b.Order)
+	})
 
 	result := make([]byte, len(plaintext))
 	copy(result, plaintext)
@@ -91,18 +144,8 @@ func hexHash(content string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func sortInserts(entries []profile.Insert) {
-	for i := 0; i < len(entries); i++ {
-		for j := i + 1; j < len(entries); j++ {
-			if entries[j].Order < entries[i].Order {
-				entries[i], entries[j] = entries[j], entries[i]
-			}
-		}
-	}
-}
-
 func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
-	perm, err := parser.ParsePermissions(secret.Mode)
+	perm, err := ParsePermissions(secret.Mode)
 	if err != nil {
 		return fmt.Errorf("parse mode %q: %w", secret.Mode, err)
 	}
@@ -121,10 +164,37 @@ func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 	}
 
 	if secret.Owner != "" || secret.Group != "" {
-		if err := owner.SetOwnerAndGroup(f.Fd(), secret.Owner, secret.Group); err != nil {
+		if err := setOwnerAndGroup(f.Fd(), secret.Owner, secret.Group); err != nil {
 			return fmt.Errorf("chown %q: %w", dst, err)
 		}
 	}
 
+	return nil
+}
+
+func setOwnerAndGroup(fd uintptr, ownerName, groupName string) error {
+	uid, gid := 0, 0
+
+	if ownerName != "" {
+		u, err := user.Lookup(ownerName)
+		if err != nil {
+			slog.Warn("owner lookup failed, falling back to root", "owner", ownerName, "error", err)
+		} else {
+			uid, _ = strconv.Atoi(u.Uid)
+		}
+	}
+
+	if groupName != "" {
+		g, err := user.LookupGroup(groupName)
+		if err != nil {
+			slog.Warn("group lookup failed, falling back to root", "group", groupName, "error", err)
+		} else {
+			gid, _ = strconv.Atoi(g.Gid)
+		}
+	}
+
+	if err := unix.Fchown(int(fd), uid, gid); err != nil {
+		return fmt.Errorf("fchown: %w", err)
+	}
 	return nil
 }

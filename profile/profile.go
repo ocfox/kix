@@ -13,47 +13,33 @@ type Profile struct {
 }
 
 type Settings struct {
-	DecryptedDir          string    `json:"decryptedDir"`
-	DecryptedDirForUser   string    `json:"decryptedDirForUser"`
-	DecryptedMountPoint   string    `json:"decryptedMountPoint"`
-	HostIdentifier        string    `json:"hostIdentifier"`
-	HostPubkey            string    `json:"hostPubkey"`
-	HostKeys              []HostKey `json:"hostKeys"`
-	CacheInStore          string    `json:"cacheInStore"`
+	DecryptedDir        string    `json:"decryptedDir"`
+	DecryptedDirForUser string    `json:"decryptedDirForUser"`
+	DecryptedMountPoint string    `json:"decryptedMountPoint"`
+	HostIdentifier      string    `json:"hostIdentifier"`
+	HostPubkey          string    `json:"hostPubkey"`
+	HostKeys            []HostKey `json:"hostKeys"`
+	CacheInStore        string    `json:"cacheInStore"`
 }
 
 type HostKey struct {
 	Path string `json:"path"`
-	Type string `json:"type"`
 }
 
 type Secret struct {
-	ID               string    `json:"id"`
-	File             string    `json:"file"`
-	Group            string    `json:"group"`
-	Mode             string    `json:"mode"`
-	Name             string    `json:"name"`
-	Owner            string    `json:"owner"`
-	Path             string    `json:"path"`
-	Insert           InsertSet `json:"insert"`
-	CleanPlaceholder bool      `json:"cleanPlaceholder"`
+	File             string            `json:"file"`
+	Group            string            `json:"group"`
+	Mode             string            `json:"mode"`
+	Name             string            `json:"name"`
+	Owner            string            `json:"owner"`
+	Path             string            `json:"path"`
+	Insert           map[string]Insert `json:"insert"`
+	CleanPlaceholder bool              `json:"cleanPlaceholder"`
 }
 
 type Insert struct {
 	Order   uint32 `json:"order"`
 	Content string `json:"content"`
-}
-
-type InsertSet struct {
-	Entries map[string]Insert
-}
-
-func (is *InsertSet) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &is.Entries)
-}
-
-func (is InsertSet) MarshalJSON() ([]byte, error) {
-	return json.Marshal(is.Entries)
 }
 
 func LoadProfiles(paths []string) ([]*Profile, error) {

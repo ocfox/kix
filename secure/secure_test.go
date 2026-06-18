@@ -1,8 +1,135 @@
-package parser
+package secure
 
 import (
+	"bytes"
 	"testing"
+
+	"filippo.io/age"
+
+	"github.com/ocfox/kix/profile"
 )
+
+const helloWorld = "Hello, kix!"
+
+func TestEncryptDecryptX25519(t *testing.T) {
+	a, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := EncryptAge([]byte(helloWorld), a.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	plaintext, err := DecryptAge(encrypted, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(plaintext) != helloWorld {
+		t.Errorf("got %q, want %q", plaintext, helloWorld)
+	}
+}
+
+func TestHashSecret(t *testing.T) {
+	hash1 := HashSecret([]byte("hello"), "recipient-a")
+	hash2 := HashSecret([]byte("hello"), "recipient-a")
+	hash3 := HashSecret([]byte("hello"), "recipient-b")
+
+	if hash1 != hash2 {
+		t.Error("same input should produce same hash")
+	}
+	if hash1 == hash3 {
+		t.Error("different recipient should produce different hash")
+	}
+	if len(hash1) != 64 {
+		t.Errorf("hash len = %d, want 64", len(hash1))
+	}
+}
+
+func TestDecryptAge_roundTrip(t *testing.T) {
+	a, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []byte("round-trip test data")
+	encrypted, err := EncryptAge(want, a.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DecryptAge(encrypted, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDecryptAge_wrongIdentity(t *testing.T) {
+	a, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := EncryptAge([]byte(helloWorld), a.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = DecryptAge(encrypted, b)
+	if err == nil {
+		t.Fatal("expected error with wrong identity")
+	}
+}
+
+func TestEncryptAge_multiRecipient(t *testing.T) {
+	a, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encrypted, err := EncryptAge([]byte(helloWorld), a.Recipient(), b.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DecryptAge(encrypted, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != helloWorld {
+		t.Errorf("got %q, want %q", got, helloWorld)
+	}
+
+	got, err = DecryptAge(encrypted, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != helloWorld {
+		t.Errorf("got %q, want %q", got, helloWorld)
+	}
+}
+
+func TestInsertContent_noPlaceholder(t *testing.T) {
+	input := []byte("no placeholder here")
+	result := InsertContent(input, map[string]profile.Insert{}, false)
+	if string(result) != string(input) {
+		t.Errorf("no placeholder should return unchanged: got %q", result)
+	}
+}
 
 func TestParsePermissions(t *testing.T) {
 	tests := []struct {
@@ -34,6 +161,19 @@ func TestParsePermissions(t *testing.T) {
 				t.Errorf("ParsePermissions(%q) = %#o, want %#o", tt.input, got, tt.expect)
 			}
 		})
+	}
+}
+
+func assertHashes(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("got len=%d, want len=%d: %v", len(got), len(want), got)
+		return
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("hash[%d]: got %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
@@ -95,7 +235,6 @@ func TestExtractHashes_singleBrace(t *testing.T) {
 }
 
 func TestExtractHashes_multilineTruncated(t *testing.T) {
-	// hash contains a newline — rejects because newline is not hex
 	for _, input := range []string{
 		"some {{ d9cd8155764c3543f10fad8a480d743137466f8d55213c8eaefcd12f06d43a80\n        }}",
 		"some {{ d9cd8155764c3543f10fad8a480d743137466f8d55213c8eaefcd12f06d43a80 }\n        }",
@@ -148,20 +287,6 @@ func TestExtractHashes_malformed(t *testing.T) {
 }
 
 func TestExtractHashes_fuzzCrash(t *testing.T) {
-	// Regression: must not panic on this input.
 	input := "{{ EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE9EEEEEEEEEEEEEEEEEE1A }}{"
 	_ = ExtractHashes(input)
-}
-
-func assertHashes(t *testing.T, got, want []string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Errorf("got len=%d, want len=%d: %v", len(got), len(want), got)
-		return
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("hash[%d]: got %q, want %q", i, got[i], want[i])
-		}
-	}
 }
