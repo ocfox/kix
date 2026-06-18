@@ -99,13 +99,6 @@ let
 
   secretType = types.submodule (submod: {
     options = {
-      id = mkOption {
-        type = types.str;
-        default = submod.config._module.args.name;
-        readOnly = true;
-        description = "Secret identifier (the attrset key in `kix.secrets`).";
-      };
-
       name = mkOption {
         type = types.str;
         default = submod.config._module.args.name;

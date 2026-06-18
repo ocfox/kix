@@ -53,14 +53,14 @@ func runSeal(identityPath, cacheDir string) error {
 	}
 
 	// Read all original encrypted secret files
-	ctx := make(map[string][]byte)
+	ciphertexts := make(map[string][]byte)
 	for _, p := range allProfiles {
 		for id, s := range p.Secrets {
 			data, err := os.ReadFile(s.File)
 			if err != nil {
 				return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
 			}
-			ctx[id] = data
+			ciphertexts[id] = data
 		}
 	}
 
@@ -73,7 +73,7 @@ func runSeal(identityPath, cacheDir string) error {
 			plan[hostID] = make(hostPlan)
 		}
 		for id := range p.Secrets {
-			hash := secure.HashSecret(ctx[id], p.Settings.HostPubkey)
+			hash := secure.HashSecret(ciphertexts[id], p.Settings.HostPubkey)
 			plan[hostID][id] = filepath.Join(cacheDir, hostID, hash)
 		}
 	}
@@ -142,7 +142,7 @@ func runSeal(identityPath, cacheDir string) error {
 		go func(hostID string, secs hostPlan, recip age.Recipient) {
 			defer wg.Done()
 			for id, dstPath := range secs {
-				plaintext, err := secure.DecryptAge(ctx[id], masterID)
+				plaintext, err := secure.DecryptAge(ciphertexts[id], masterID)
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, fmt.Errorf("decrypt %s: %w", id, err))
