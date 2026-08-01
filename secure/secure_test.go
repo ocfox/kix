@@ -2,9 +2,15 @@ package secure
 
 import (
 	"bytes"
+	"errors"
+	"os"
+	"os/user"
+	"path/filepath"
 	"testing"
 
 	"filippo.io/age"
+
+	"github.com/ocfox/kix/profile"
 )
 
 const helloWorld = "Hello, kix!"
@@ -151,5 +157,49 @@ func TestParsePermissions(t *testing.T) {
 				t.Errorf("ParsePermissions(%q) = %#o, want %#o", tt.input, got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestDeployToFS_unknownOwnerIsAnError(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "secret")
+	secret := &profile.Secret{
+		Mode:  "0400",
+		Owner: "kix-test-user-that-does-not-exist",
+	}
+
+	err := DeployToFS([]byte("payload"), secret, dst)
+	if err == nil {
+		t.Fatal("expected an error, got nil: a failed lookup must not silently deploy as root")
+	}
+
+	// Assert on the cause, not just on "some error". Running as an ordinary
+	// user the old fallback-to-uid-0 also errored, but from Fchown returning
+	// EPERM; the point of the change is that the lookup failure itself is
+	// surfaced instead of being turned into root ownership.
+	var unknownUser user.UnknownUserError
+	if !errors.As(err, &unknownUser) {
+		t.Errorf("error was %v, want it to wrap user.UnknownUserError", err)
+	}
+
+	if _, statErr := os.Stat(dst); !os.IsNotExist(statErr) {
+		t.Errorf("plaintext left behind at %s after a failed chown", dst)
+	}
+}
+
+func TestDeployToFS_unknownGroupIsAnError(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "secret")
+	secret := &profile.Secret{
+		Mode:  "0400",
+		Group: "kix-test-group-that-does-not-exist",
+	}
+
+	err := DeployToFS([]byte("payload"), secret, dst)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+
+	var unknownGroup user.UnknownGroupError
+	if !errors.As(err, &unknownGroup) {
+		t.Errorf("error was %v, want it to wrap user.UnknownGroupError", err)
 	}
 }

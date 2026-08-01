@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -123,12 +124,19 @@ func runSeal(manifestPath string) error {
 		hostPubkeys[p.Settings.HostIdentifier] = p.Settings.HostPubkey
 	}
 
+	plaintexts, err := decryptOnce(ciphertexts, missing, masterID)
+	if err != nil {
+		return err
+	}
+
 	var (
 		errs []error
 		mu   sync.Mutex
 		wg   sync.WaitGroup
 	)
 
+	// Encryption is pure computation over an already-decrypted plaintext, so
+	// unlike the decryption above it is safe to run per host in parallel.
 	for hostID, secs := range missing {
 		recip, err := parseRecipient(hostPubkeys[hostID], nil)
 		if err != nil {
@@ -139,31 +147,23 @@ func runSeal(manifestPath string) error {
 		go func(hostID string, secs hostPlan, recip age.Recipient) {
 			defer wg.Done()
 			for id, dstPath := range secs {
-				plaintext, err := secure.DecryptAge(ciphertexts[id], masterID)
-				if err != nil {
+				fail := func(err error) {
 					mu.Lock()
-					errs = append(errs, fmt.Errorf("decrypt %s: %w", id, err))
+					errs = append(errs, err)
 					mu.Unlock()
-					return
 				}
-				encrypted, err := secure.EncryptAge(plaintext, recip)
+				encrypted, err := secure.EncryptAge(plaintexts[id], recip)
 				if err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("encrypt %s for %s: %w", id, hostID, err))
-					mu.Unlock()
-					return
+					fail(fmt.Errorf("encrypt %s for %s: %w", id, hostID, err))
+					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("mkdir for %s: %w", id, err))
-					mu.Unlock()
-					return
+					fail(fmt.Errorf("mkdir for %s: %w", id, err))
+					continue
 				}
 				if err := os.WriteFile(dstPath, encrypted, 0o644); err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("write %s: %w", dstPath, err))
-					mu.Unlock()
-					return
+					fail(fmt.Errorf("write %s: %w", dstPath, err))
+					continue
 				}
 				slog.Info("sealed", "secret", id, "host", hostID)
 			}
@@ -172,13 +172,39 @@ func runSeal(manifestPath string) error {
 
 	wg.Wait()
 
-	for _, e := range errs {
-		slog.Error("seal error", "error", e)
-	}
 	if len(errs) > 0 {
-		return fmt.Errorf("seal completed with %d error(s)", len(errs))
+		return errors.Join(errs...)
 	}
 
 	slog.Info("seal complete")
 	return nil
+}
+
+// decryptOnce decrypts each distinct secret in the plan exactly once.
+//
+// This must not run concurrently and must not repeat work per host. A plugin
+// identity (age-plugin-yubikey and friends) spawns a fresh plugin process on
+// every Unwrap and shares a single unsynchronised *plugin.ClientUI, so running
+// several at once means multiple processes contending for one hardware token
+// and one terminal. Decrypting per (host, secret) pair rather than per secret
+// also means a secret shared by N hosts costs N token interactions.
+func decryptOnce(
+	ciphertexts map[string][]byte,
+	missing map[string]map[string]string,
+	id age.Identity,
+) (map[string][]byte, error) {
+	plaintexts := make(map[string][]byte)
+	for _, secs := range missing {
+		for secretID := range secs {
+			if _, done := plaintexts[secretID]; done {
+				continue
+			}
+			plaintext, err := secure.DecryptAge(ciphertexts[secretID], id)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt %s: %w", secretID, err)
+			}
+			plaintexts[secretID] = plaintext
+		}
+	}
+	return plaintexts, nil
 }

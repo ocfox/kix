@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"os/user"
 	"strconv"
@@ -78,6 +77,8 @@ func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 
 	if secret.Owner != "" || secret.Group != "" {
 		if err := setOwnerAndGroup(f.Fd(), secret.Owner, secret.Group); err != nil {
+			// Do not leave a plaintext behind under ownership nobody asked for.
+			os.Remove(dst)
 			return fmt.Errorf("chown %q: %w", dst, err)
 		}
 	}
@@ -85,24 +86,32 @@ func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 	return nil
 }
 
+// setOwnerAndGroup fails rather than falling back to root. Falling back would
+// silently widen or narrow who can read a secret: a file meant to be 0640
+// alice:alice becomes 0640 root:root, so the service it was written for cannot
+// read it, and a group that was supposed to be restricted becomes root's.
 func setOwnerAndGroup(fd uintptr, ownerName, groupName string) error {
 	uid, gid := 0, 0
 
 	if ownerName != "" {
 		u, err := user.Lookup(ownerName)
 		if err != nil {
-			slog.Warn("owner lookup failed, falling back to root", "owner", ownerName, "error", err)
-		} else {
-			uid, _ = strconv.Atoi(u.Uid)
+			return fmt.Errorf("looking up owner %q: %w", ownerName, err)
+		}
+		uid, err = strconv.Atoi(u.Uid)
+		if err != nil {
+			return fmt.Errorf("owner %q has non-numeric uid %q: %w", ownerName, u.Uid, err)
 		}
 	}
 
 	if groupName != "" {
 		g, err := user.LookupGroup(groupName)
 		if err != nil {
-			slog.Warn("group lookup failed, falling back to root", "group", groupName, "error", err)
-		} else {
-			gid, _ = strconv.Atoi(g.Gid)
+			return fmt.Errorf("looking up group %q: %w", groupName, err)
+		}
+		gid, err = strconv.Atoi(g.Gid)
+		if err != nil {
+			return fmt.Errorf("group %q has non-numeric gid %q: %w", groupName, g.Gid, err)
 		}
 	}
 
