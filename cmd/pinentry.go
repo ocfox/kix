@@ -74,9 +74,10 @@ func askPinentry(prog, desc, prompt string) ([]byte, error) {
 		return nil, err
 	}
 	// Without these a curses pinentry has no terminal to draw on and a
-	// graphical one has no display to open.
+	// graphical one has no display to open. Implementations differ in which
+	// they accept, though, and a refused option is not worth failing over.
 	for _, opt := range terminalOptions() {
-		if err := c.command("OPTION " + opt); err != nil {
+		if err := c.optional("OPTION " + opt); err != nil {
 			return nil, err
 		}
 	}
@@ -125,10 +126,10 @@ func terminalOptions() []string {
 	if lc != "" {
 		opts = append(opts, "lc-ctype="+lc)
 	}
-	for _, name := range []string{"DISPLAY", "WAYLAND_DISPLAY"} {
-		if v := os.Getenv(name); v != "" {
-			opts = append(opts, strings.ToLower(name)+"="+v)
-		}
+	// Only DISPLAY: there is no wayland_display option, and a graphical
+	// pinentry on Wayland finds its own way to the compositor.
+	if d := os.Getenv("DISPLAY"); d != "" {
+		opts = append(opts, "display="+d)
 	}
 	return opts
 }
@@ -176,6 +177,16 @@ func (c *assuan) command(line string) error {
 
 // assuanError turns "ERR <code> <description>" into just the description; the
 // numeric code means nothing to the person reading the message.
+// optional sends a line whose rejection does not matter, and fails only if the
+// conversation itself breaks down.
+func (c *assuan) optional(line string) error {
+	if err := c.send(line); err != nil {
+		return err
+	}
+	_, err := c.read()
+	return err
+}
+
 func assuanError(line string) error {
 	rest := strings.TrimSpace(strings.TrimPrefix(line, "ERR "))
 	if code, desc, ok := strings.Cut(rest, " "); ok {

@@ -113,6 +113,50 @@ func TestAskPinentryTellsPinentryWhichTerminalToUse(t *testing.T) {
 	}
 }
 
+// There is no wayland_display option; a real pinentry answers "Unknown
+// option" and, before this was fixed, that killed the prompt.
+func TestTerminalOptionsOnlySendsOptionsPinentryKnows(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "wayland-1")
+	t.Setenv("DISPLAY", ":0")
+
+	known := map[string]bool{"ttyname": true, "ttytype": true, "lc-ctype": true, "display": true}
+	for _, opt := range terminalOptions() {
+		name, _, _ := strings.Cut(opt, "=")
+		if !known[name] {
+			t.Errorf("terminalOptions sent unknown option %q", name)
+		}
+	}
+}
+
+// Implementations differ in which options they take, and none of them are
+// worth failing the prompt over.
+func TestAskPinentrySurvivesARejectedOption(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "pinentry")
+	script := `#!/bin/sh
+printf 'OK Pleased to meet you\n'
+while IFS= read -r line; do
+  case "$line" in
+    OPTION*) printf 'ERR 83886254 Unknown option <Pinentry>\n' ;;
+    GETPIN*) printf 'D hunter2\nOK\n' ;;
+    BYE*) printf 'OK\n'; exit 0 ;;
+    *) printf 'OK\n' ;;
+  esac
+done
+`
+	if err := os.WriteFile(prog, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing fake pinentry: %v", err)
+	}
+
+	got, err := askPinentry(prog, "unlocking id.txt", "Passphrase:")
+	if err != nil {
+		t.Fatalf("askPinentry: %v", err)
+	}
+	if string(got) != "hunter2" {
+		t.Errorf("askPinentry returned %q, want %q", got, "hunter2")
+	}
+}
+
 // A hardware token's PIN should reach the same prompt as everything else.
 func TestTerminalUIAsksForPluginSecretsThroughPinentry(t *testing.T) {
 	prog := fakePinentry(t, `printf 'D 123456\nOK\n'`)
