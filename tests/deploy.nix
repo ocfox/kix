@@ -93,5 +93,39 @@ in
 
     machine.succeed("test -L /run/kix")
     machine.succeed("stat -f -c %T /run/kix.d | grep -q ramfs")
+
+    # A mount point that exists but has nothing mounted on it must be remounted,
+    # not silently used as a plain tmpfs directory under /run.
+    machine.succeed("umount /run/kix.d")
+    machine.succeed("test -d /run/kix.d")
+    assert "ramfs" not in machine.succeed("stat -f -c %T /run/kix.d")
+    machine.succeed("systemctl restart kix-activate.service")
+    machine.succeed("stat -f -c %T /run/kix.d | grep -q ramfs")
+    assert machine.succeed("cat /run/kix/test") == "${payload}"
+
+    # Restarting the unit repeatedly must keep /run/kix pointing at a usable
+    # generation. The ENOENT watcher is opportunistic: it cannot report a false
+    # positive, but the window it looks for is far too narrow for a shell loop
+    # to hit reliably, so it is not a regression test for the atomic swap --
+    # verified by confirming it still passes against the racy version.
+    machine.succeed("""
+      rm -f /tmp/enoent /tmp/stop
+      ( until test -e /tmp/stop; do cat /run/kix/test >/dev/null 2>&1 || touch /tmp/enoent; done ) &
+      reader=$!
+      for _ in 1 2 3; do systemctl restart kix-activate.service; done
+      touch /tmp/stop
+      wait $reader
+      test ! -e /tmp/enoent
+    """)
+
+    assert machine.succeed("cat /run/kix/test") == "${payload}"
+
+    # Old generations hold a full copy of every plaintext on ramfs, so exactly
+    # one must survive an activation no matter how many have been created.
+    generations = machine.succeed("ls /run/kix.d/normal | wc -l").strip()
+    assert generations == "1", f"{generations} generation directories left, want 1"
+    assert machine.succeed("readlink /run/kix") == machine.succeed(
+        "ls -d /run/kix.d/normal/*"
+    )
   '';
 }

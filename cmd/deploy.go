@@ -127,12 +127,62 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		return fmt.Errorf("deploy completed with %d error(s)", len(deployErrs))
 	}
 
-	os.Remove(symlinkDst)
-	if err := os.Symlink(genDir, symlinkDst); err != nil {
-		return fmt.Errorf("creating symlink: %w", err)
+	if err := replaceSymlink(genDir, symlinkDst); err != nil {
+		return fmt.Errorf("pointing %s at %s: %w", symlinkDst, genDir, err)
 	}
 
+	pruneGenerations(filepath.Dir(genDir), genDir)
+
 	slog.Info("deploy complete")
+	return nil
+}
+
+// pruneGenerations removes every generation directory except keep.
+//
+// Each activation creates a new one holding a full set of plaintext secrets,
+// and they live on ramfs, which is neither swapped nor reclaimed under memory
+// pressure. Leaving them behind pins one copy of every secret in RAM per
+// rebuild, forever.
+//
+// Called only after the symlink has been swapped, so the outgoing generation
+// stays intact for as long as anything can still be pointed at it.
+func pruneGenerations(genBase, keep string) {
+	entries, err := os.ReadDir(genBase)
+	if err != nil {
+		slog.Warn("listing generations", "path", genBase, "error", err)
+		return
+	}
+	for _, e := range entries {
+		path := filepath.Join(genBase, e.Name())
+		if path == keep {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("removing old generation", "path", path, "error", err)
+		}
+	}
+}
+
+// replaceSymlink points name at target without name ever being absent.
+//
+// Removing the old link and then creating the new one leaves a window in which
+// name does not exist. That is invisible at boot, where consumers are ordered
+// after kix-activate, but on `nixos-rebuild switch` the unit re-runs underneath
+// services that are already running, and one reading its secret during the
+// window gets ENOENT. Renaming over the old link is atomic, so a reader sees
+// either the old generation or the new one.
+func replaceSymlink(target, name string) error {
+	tmp := name + ".tmp"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clearing %s: %w", tmp, err)
+	}
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, name); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
 
@@ -154,6 +204,35 @@ func hostKeyIdentities(p *profile.Profile) []age.Identity {
 	return idents
 }
 
+// ramfsMagic is RAMFS_MAGIC from linux/magic.h.
+const ramfsMagic = 0x858458f6
+
+// ensureRamfs makes mountPoint exist and be a ramfs mount.
+//
+// Testing whether the directory exists is not the same question: if it exists
+// but nothing is mounted on it -- a failed mount that left the mkdir behind,
+// or someone creating it by hand -- secrets land on the plain /run tmpfs
+// instead. That matters because tmpfs pages can be swapped out and ramfs pages
+// cannot, which is the whole reason for mounting anything here.
+func ensureRamfs(mountPoint string) error {
+	if err := os.MkdirAll(mountPoint, 0o751); err != nil {
+		return fmt.Errorf("creating mount point %s: %w", mountPoint, err)
+	}
+
+	var st unix.Statfs_t
+	if err := unix.Statfs(mountPoint, &st); err != nil {
+		return fmt.Errorf("statfs %s: %w", mountPoint, err)
+	}
+	if st.Type == ramfsMagic {
+		return nil
+	}
+
+	if err := unix.Mount("ramfs", mountPoint, "ramfs", unix.MS_NOSUID, "mode=751"); err != nil {
+		return fmt.Errorf("mounting ramfs at %s: %w", mountPoint, err)
+	}
+	return nil
+}
+
 func nextGenDir(mountPoint string, early bool) (string, error) {
 	target := "normal"
 	if early {
@@ -161,21 +240,8 @@ func nextGenDir(mountPoint string, early bool) (string, error) {
 	}
 	genBase := filepath.Join(mountPoint, target)
 
-	if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
-		if err := os.MkdirAll(mountPoint, 0o751); err != nil {
-			return "", fmt.Errorf("creating mount point %s: %w", mountPoint, err)
-		}
-		if err := unix.Mount("ramfs", mountPoint, "ramfs", unix.MS_NOSUID, "mode=751"); err != nil {
-			return "", fmt.Errorf("mounting ramfs at %s: %w", mountPoint, err)
-		}
-		if err := os.MkdirAll(genBase, 0o751); err != nil {
-			return "", fmt.Errorf("creating %s: %w", genBase, err)
-		}
-		genDir := filepath.Join(genBase, "0")
-		if err := os.MkdirAll(genDir, 0o751); err != nil {
-			return "", fmt.Errorf("creating generation dir: %w", err)
-		}
-		return genDir, nil
+	if err := ensureRamfs(mountPoint); err != nil {
+		return "", err
 	}
 
 	if err := os.MkdirAll(genBase, 0o751); err != nil {
