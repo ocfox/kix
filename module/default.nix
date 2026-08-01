@@ -143,7 +143,11 @@ in
     };
 
     mountPoint = mkOption {
-      type = types.str;
+      # A trailing slash or a relative path here only fails later, inside
+      # mount(2), where the message says nothing about which option was wrong.
+      type = types.addCheck types.str (s: lib.hasPrefix "/" s && !lib.hasSuffix "/" s) // {
+        description = "absolute path without a trailing slash";
+      };
       default = "/run/kix.d";
       description = "Where the ramfs holding the decrypted secrets is mounted.";
     };
