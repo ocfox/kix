@@ -5,7 +5,7 @@
 
 buildGoModule {
   pname = "kix";
-  version = "0-unstable-2026-08-01";
+  version = "0.1.0";
 
   src = lib.fileset.toSource {
     root = ./.;
