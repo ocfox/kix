@@ -9,19 +9,16 @@ import (
 )
 
 type Profile struct {
-	Settings       Settings          `json:"settings"`
-	Secrets        map[string]Secret `json:"secrets"`
-	BeforeUserborn []string          `json:"beforeUserborn"`
-}
+	HostName     string    `json:"hostName"`
+	HostPubkey   string    `json:"hostPubkey"`
+	HostKeys     []HostKey `json:"hostKeys"`
+	CacheInStore string    `json:"cacheInStore"`
 
-type Settings struct {
-	DecryptedDir        string    `json:"decryptedDir"`
-	DecryptedDirForUser string    `json:"decryptedDirForUser"`
-	DecryptedMountPoint string    `json:"decryptedMountPoint"`
-	HostIdentifier      string    `json:"hostIdentifier"`
-	HostPubkey          string    `json:"hostPubkey"`
-	HostKeys            []HostKey `json:"hostKeys"`
-	CacheInStore        string    `json:"cacheInStore"`
+	Dir        string `json:"dir"`
+	DirForUser string `json:"dirForUser"`
+	MountPoint string `json:"mountPoint"`
+
+	Secrets map[string]Secret `json:"secrets"`
 }
 
 type HostKey struct {
@@ -29,12 +26,13 @@ type HostKey struct {
 }
 
 type Secret struct {
-	File  string `json:"file"`
-	Group string `json:"group"`
-	Mode  string `json:"mode"`
-	Name  string `json:"name"`
-	Owner string `json:"owner"`
-	Path  string `json:"path"`
+	File           string `json:"file"`
+	Group          string `json:"group"`
+	Mode           string `json:"mode"`
+	Name           string `json:"name"`
+	Owner          string `json:"owner"`
+	Path           string `json:"path"`
+	BeforeUserborn bool   `json:"beforeUserborn"`
 }
 
 func Load(path string) (*Profile, error) {

@@ -40,20 +40,25 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		return err
 	}
 
-	if earlyMode && len(p.BeforeUserborn) == 0 {
-		slog.Info("nothing to deploy before userborn")
-		return nil
+	// Each run owns exactly one of the two sets. Deploying all of them in both
+	// runs would, in the early run, try to write the ordinary secrets into a
+	// directory that the later run has not created yet.
+	secrets := make(map[string]profile.Secret)
+	for id, s := range p.Secrets {
+		if s.BeforeUserborn == earlyMode {
+			secrets[id] = s
+		}
 	}
-	if len(p.Secrets) == 0 {
-		slog.Info("no secrets to deploy")
+	if len(secrets) == 0 {
+		slog.Info("no secrets to deploy", "early", earlyMode)
 		return nil
 	}
 
 	idents := hostKeyIdentities(p)
 
-	symlinkDst := p.Settings.DecryptedDir
+	symlinkDst := p.Dir
 	if earlyMode {
-		symlinkDst = p.Settings.DecryptedDirForUser
+		symlinkDst = p.DirForUser
 	}
 
 	if fi, err := os.Lstat(symlinkDst); err == nil {
@@ -62,7 +67,7 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		}
 	}
 
-	genDir, err := nextGenDir(p.Settings.DecryptedMountPoint, earlyMode)
+	genDir, err := nextGenDir(p.MountPoint, earlyMode)
 	if err != nil {
 		return err
 	}
@@ -71,13 +76,13 @@ func runDeploy(profilePath string, earlyMode bool) error {
 	plainMap := make(map[string][]byte)
 	var verifiedIdent age.Identity
 
-	for id, s := range p.Secrets {
+	for id, s := range secrets {
 		// Original .age file gives us the hash that names the re-encrypted cache entry
 		original, err := os.ReadFile(s.File)
 		if err != nil {
 			return fmt.Errorf("reading secret file %s: %w", id, err)
 		}
-		encPath := filepath.Join(p.Settings.CacheInStore, secure.HashSecret(original, p.Settings.HostPubkey))
+		encPath := filepath.Join(p.CacheInStore, secure.HashSecret(original, p.HostPubkey))
 
 		encrypted, err := os.ReadFile(encPath)
 		if err != nil {
@@ -108,13 +113,10 @@ func runDeploy(profilePath string, earlyMode bool) error {
 
 	// Deploy to filesystem
 	var deployErrs []error
-	for id, s := range p.Secrets {
+	for id, s := range secrets {
 		plaintext := plainMap[id]
 
 		dst := filepath.Join(genDir, s.Name)
-		if s.Path != "" && s.Path != filepath.Join(symlinkDst, s.Name) {
-			dst = s.Path
-		}
 
 		if err := secure.DeployToFS(plaintext, &s, dst); err != nil {
 			slog.Error("deploy failed", "secret", id, "error", err)
@@ -188,7 +190,7 @@ func replaceSymlink(target, name string) error {
 
 func hostKeyIdentities(p *profile.Profile) []age.Identity {
 	var idents []age.Identity
-	for _, hk := range p.Settings.HostKeys {
+	for _, hk := range p.HostKeys {
 		keyData, err := os.ReadFile(hk.Path)
 		if err != nil {
 			slog.Warn("reading host key", "path", hk.Path, "error", err)

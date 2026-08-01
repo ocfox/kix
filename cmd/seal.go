@@ -66,12 +66,12 @@ func runSeal(manifestPath string) error {
 	type hostPlan = map[string]string
 	plan := make(map[string]hostPlan)
 	for _, p := range allProfiles {
-		hostID := p.Settings.HostIdentifier
+		hostID := p.HostName
 		if plan[hostID] == nil {
 			plan[hostID] = make(hostPlan)
 		}
 		for id := range p.Secrets {
-			hash := secure.HashSecret(ciphertexts[id], p.Settings.HostPubkey)
+			hash := secure.HashSecret(ciphertexts[id], p.HostPubkey)
 			plan[hostID][id] = filepath.Join(m.Cache, hostID, hash)
 		}
 	}
@@ -85,7 +85,7 @@ func runSeal(manifestPath string) error {
 		}
 	}
 	for _, p := range allProfiles {
-		hostDir := filepath.Join(m.Cache, p.Settings.HostIdentifier)
+		hostDir := filepath.Join(m.Cache, p.HostName)
 		entries, err := os.ReadDir(hostDir)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -121,7 +121,7 @@ func runSeal(manifestPath string) error {
 
 	hostPubkeys := make(map[string]string)
 	for _, p := range allProfiles {
-		hostPubkeys[p.Settings.HostIdentifier] = p.Settings.HostPubkey
+		hostPubkeys[p.HostName] = p.HostPubkey
 	}
 
 	plaintexts, err := decryptOnce(ciphertexts, missing, masterID)
