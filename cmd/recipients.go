@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"filippo.io/age"
@@ -189,6 +189,6 @@ func recipientSet(m *manifest.Manifest, masterID age.Identity) (stamp, []age.Rec
 		return stamp{}, nil, errors.New("no recipients: the identity has none of its own and no extraRecipients are set")
 	}
 
-	sort.Strings(s.extra)
+	slices.Sort(s.extra)
 	return s, recips, nil
 }

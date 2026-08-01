@@ -21,6 +21,10 @@ var (
 	sealOldIdentity string
 )
 
+// hostPlan maps a secret id to the cache path it should be sealed into for one
+// host.
+type hostPlan = map[string]string
+
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Re-encrypt secrets for each host",
@@ -71,7 +75,6 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 	}
 
 	// Build plan: hostID -> {secretID -> destPath}
-	type hostPlan = map[string]string
 	plan := make(map[string]hostPlan)
 	for _, p := range allProfiles {
 		hostID := p.HostName
@@ -108,7 +111,9 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 			path := filepath.Join(hostDir, e.Name())
 			if !current[path] {
 				slog.Debug("removing outdated", "path", path)
-				os.Remove(path)
+				if err := os.Remove(path); err != nil {
+					slog.Warn("removing outdated cache entry", "path", path, "error", err)
+				}
 			}
 		}
 	}
@@ -198,7 +203,7 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 // also means a secret shared by N hosts costs N token interactions.
 func decryptOnce(
 	ciphertexts map[string][]byte,
-	missing map[string]map[string]string,
+	missing map[string]hostPlan,
 	id age.Identity,
 ) (map[string][]byte, error) {
 	plaintexts := make(map[string][]byte)

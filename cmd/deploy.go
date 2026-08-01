@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"filippo.io/age"
@@ -17,7 +18,7 @@ import (
 )
 
 var (
-	early         bool
+	deployEarly   bool
 	deployProfile string
 )
 
@@ -25,13 +26,13 @@ var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Decrypt and deploy secrets",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeploy(deployProfile, early)
+		return runDeploy(deployProfile, deployEarly)
 	},
 }
 
 func init() {
 	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile of the host to deploy")
-	deployCmd.Flags().BoolVarP(&early, "early", "e", false, "deploy before users init")
+	deployCmd.Flags().BoolVarP(&deployEarly, "early", "e", false, "deploy before users init")
 	deployCmd.MarkFlagRequired("profile")
 }
 
@@ -266,20 +267,25 @@ func nextGenDir(mountPoint string, early bool) (string, error) {
 		return "", fmt.Errorf("creating %q: %w", genBase, err)
 	}
 
-	entries, _ := os.ReadDir(genBase)
-	max := 0
+	entries, err := os.ReadDir(genBase)
+	if err != nil {
+		return "", fmt.Errorf("listing generations in %q: %w", genBase, err)
+	}
+	next := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		var n int
-		fmt.Sscanf(e.Name(), "%d", &n)
-		if n >= max {
-			max = n + 1
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if n >= next {
+			next = n + 1
 		}
 	}
 
-	genDir := filepath.Join(genBase, fmt.Sprintf("%d", max))
+	genDir := filepath.Join(genBase, strconv.Itoa(next))
 	if err := os.MkdirAll(genDir, 0o751); err != nil {
 		return "", fmt.Errorf("creating generation dir: %w", err)
 	}
