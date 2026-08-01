@@ -182,12 +182,27 @@ func refusePassphrase(desc, prompt string) ([]byte, error) {
 	return nil, errors.New("identity file is encrypted inside an encrypted identity file")
 }
 
+// sshIdentity carries the public key alongside the identity. age keeps it
+// unexported, but seal and edit need it to know what to encrypt back to.
+type sshIdentity struct {
+	age.Identity
+	recipient age.Recipient
+	pubKey    ssh.PublicKey
+}
+
+// name is the authorized_keys line, which is also how a user would write this
+// key in extraRecipients.
+func (i *sshIdentity) name() string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(i.pubKey)))
+}
+
 // parseSSHIdentity handles both plain and passphrase-protected private keys.
 func parseSSHIdentity(contents []byte, name string, ask passphraseFunc) (age.Identity, error) {
-	id, err := agessh.ParseIdentity(contents)
+	raw, err := ssh.ParseRawPrivateKey(contents)
 	if err == nil {
-		return id, nil
+		return plainSSHIdentity(contents, raw, name)
 	}
+
 	var missing *ssh.PassphraseMissingError
 	if !errors.As(err, &missing) {
 		return nil, fmt.Errorf("parsing SSH identity in %q: %w", name, err)
@@ -196,9 +211,35 @@ func parseSSHIdentity(contents []byte, name string, ask passphraseFunc) (age.Ide
 		return nil, fmt.Errorf("%q is encrypted and carries no public key", name)
 	}
 	// The passphrase is only requested if a stanza actually matches this key.
-	return agessh.NewEncryptedSSHIdentity(missing.PublicKey, contents, func() ([]byte, error) {
+	id, err := agessh.NewEncryptedSSHIdentity(missing.PublicKey, contents, func() ([]byte, error) {
 		return ask(fmt.Sprintf("Unlocking the SSH key %s.", name), "Passphrase:")
 	})
+	if err != nil {
+		return nil, fmt.Errorf("parsing SSH identity in %q: %w", name, err)
+	}
+	return &sshIdentity{Identity: id, recipient: id.Recipient(), pubKey: missing.PublicKey}, nil
+}
+
+func plainSSHIdentity(contents []byte, raw any, name string) (age.Identity, error) {
+	id, err := agessh.ParseIdentity(contents)
+	if err != nil {
+		return nil, fmt.Errorf("parsing SSH identity in %q: %w", name, err)
+	}
+	signer, err := ssh.NewSignerFromKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("taking the public key of %q: %w", name, err)
+	}
+
+	var recipient age.Recipient
+	switch id := id.(type) {
+	case *agessh.Ed25519Identity:
+		recipient = id.Recipient()
+	case *agessh.RSAIdentity:
+		recipient = id.Recipient()
+	default:
+		return nil, fmt.Errorf("unsupported SSH identity type %T in %q", id, name)
+	}
+	return &sshIdentity{Identity: id, recipient: recipient, pubKey: signer.PublicKey()}, nil
 }
 
 func parseIdentity(s string, ui *plugin.ClientUI) (age.Identity, error) {

@@ -53,18 +53,29 @@ func passphraseIdentityFile(t *testing.T, passphrase string) (path string, inner
 	return writeFile(t, "id.age", buf.Bytes()), inner
 }
 
-// encryptedSSHKeyFile writes a passphrase-protected ed25519 key and returns it.
-func encryptedSSHKeyFile(t *testing.T, passphrase string) string {
+// sshKeyPEM returns an ed25519 private key, encrypted if passphrase is set.
+func sshKeyPEM(t *testing.T, passphrase string) []byte {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
 	}
-	block, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
-	if err != nil {
-		t.Fatalf("MarshalPrivateKeyWithPassphrase: %v", err)
+	var block *pem.Block
+	if passphrase == "" {
+		block, err = ssh.MarshalPrivateKey(priv, "")
+	} else {
+		block, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(passphrase))
 	}
-	return writeFile(t, "id_ed25519", pem.EncodeToMemory(block))
+	if err != nil {
+		t.Fatalf("marshalling SSH key: %v", err)
+	}
+	return pem.EncodeToMemory(block)
+}
+
+// encryptedSSHKeyFile writes a passphrase-protected ed25519 key and returns it.
+func encryptedSSHKeyFile(t *testing.T, passphrase string) string {
+	t.Helper()
+	return writeFile(t, "id_ed25519", sshKeyPEM(t, passphrase))
 }
 
 // asking returns a passphrase source that hands back answer and counts calls.
@@ -109,6 +120,32 @@ func TestParseIdentityFileReportsAWrongPassphrase(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "passphrase") {
 		t.Errorf("error %q does not mention the passphrase", err)
+	}
+}
+
+// An identity that parses but has no recipient here is useless: seal and edit
+// both need to know what to encrypt back to.
+func TestIdentityRecipientHandlesSSHKeys(t *testing.T) {
+	plain := writeFile(t, "id_plain", sshKeyPEM(t, ""))
+	encrypted := encryptedSSHKeyFile(t, "hunter2")
+
+	for _, path := range []string{plain, encrypted} {
+		var calls int
+		ids, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
+		if err != nil {
+			t.Fatalf("parseIdentityFile(%s): %v", path, err)
+		}
+		r, name, err := identityRecipient(ids[0])
+		if err != nil {
+			t.Errorf("identityRecipient(%T): %v", ids[0], err)
+			continue
+		}
+		if r == nil {
+			t.Errorf("identityRecipient(%T) returned no recipient", ids[0])
+		}
+		if !strings.HasPrefix(name, "ssh-ed25519 ") {
+			t.Errorf("identityRecipient(%T) named the key %q", ids[0], name)
+		}
 	}
 }
 
