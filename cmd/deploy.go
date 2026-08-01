@@ -127,12 +127,34 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		return fmt.Errorf("deploy completed with %d error(s)", len(deployErrs))
 	}
 
-	os.Remove(symlinkDst)
-	if err := os.Symlink(genDir, symlinkDst); err != nil {
-		return fmt.Errorf("creating symlink: %w", err)
+	if err := replaceSymlink(genDir, symlinkDst); err != nil {
+		return fmt.Errorf("pointing %s at %s: %w", symlinkDst, genDir, err)
 	}
 
 	slog.Info("deploy complete")
+	return nil
+}
+
+// replaceSymlink points name at target without name ever being absent.
+//
+// Removing the old link and then creating the new one leaves a window in which
+// name does not exist. That is invisible at boot, where consumers are ordered
+// after kix-activate, but on `nixos-rebuild switch` the unit re-runs underneath
+// services that are already running, and one reading its secret during the
+// window gets ENOENT. Renaming over the old link is atomic, so a reader sees
+// either the old generation or the new one.
+func replaceSymlink(target, name string) error {
+	tmp := name + ".tmp"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clearing %s: %w", tmp, err)
+	}
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, name); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
 
