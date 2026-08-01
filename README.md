@@ -15,6 +15,12 @@ The point of the cache is that your identity is only needed when secrets
 change, not when a machine boots or rebuilds. The cost is a second copy of
 every secret in the repository.
 
+## Requirements
+
+`systemd.sysusers` or `services.userborn` must be enabled, so that the users
+owning secrets exist by the time they are deployed. Secrets needed by user
+creation itself can be deployed earlier with `beforeUserborn`.
+
 ## Usage
 
 In your flake:
@@ -45,16 +51,62 @@ In each host, import the pre-wired module rather than `nixosModules.default`:
 ```nix
 {
   imports = [ config.flake.kix.nixosModule ];
+
   kix.hostPubkey = "ssh-ed25519 AAAAC3Nz...";
-  kix.secrets.my-secret = { };
+
+  kix.secrets.my-secret = {
+    owner = "nginx";
+    mode = "0440";
+  };
 }
 ```
+
+A secret takes its file from its attribute name: `kix.secrets.my-secret` reads
+`<flake.kix.secretsDir>/my-secret.age`, so `./secrets/my-secret.age` by default.
+Evaluation fails if that file does not exist. Set `file` to point somewhere
+else, keeping in mind that `seal` only re-encrypts sources inside `secretsDir`.
+
+The default owner is `root` and the default mode `0400`, which a service running
+as its own user cannot read — set `owner` to the user that needs it.
 
 Reference a secret through its `path`, which is read-only:
 
 ```nix
 services.foo.environmentFile = config.kix.secrets.my-secret.path;
 ```
+
+## Options
+
+`flake.kix.*`, once per flake:
+
+| | default | |
+|---|---|---|
+| `identity` | — | Age identity that decrypts the source `.age` files. |
+| `secretsDir` | `./secrets` | Source `.age` files, relative to the flake root. |
+| `cache` | `./secrets/cache` | Where `seal` writes the sealed secrets. Must be committed. |
+| `extraRecipients` | `[ ]` | Further recipients the sources are encrypted to, on top of your identity's own. |
+
+`kix.*`, once per host:
+
+| | default | |
+|---|---|---|
+| `hostPubkey` | — | Public key the host's secrets are sealed to. A string, or a path to read it from. |
+| `hostKeys` | `config.services.openssh.hostKeys` | Private keys tried when decrypting at activation. |
+| `dir` | `/run/kix` | Where decrypted secrets are reachable. |
+| `mountPoint` | `/run/kix.d` | Where the ramfs holding them is mounted. |
+| `secrets` | `{ }` | The secrets themselves. |
+
+`kix.secrets.<name>.*`:
+
+| | default | |
+|---|---|---|
+| `owner` | `root` | User of the decrypted secret. |
+| `group` | the owner's primary group | Group of the decrypted secret. |
+| `mode` | `0400` | Permissions of the decrypted secret. |
+| `file` | `<secretsDir>/<name>.age` | Source the secret is loaded from. |
+| `name` | the attribute name | Filename the secret is deployed under. |
+| `beforeUserborn` | `false` | Deploy before users are created. Such a secret can only be owned by `root`, since no other user exists yet, and lands under `<dir>-for-user`. |
+| `path` | read-only | Where the decrypted secret can be read. Point consumers at this. |
 
 ## Commands
 
@@ -99,25 +151,15 @@ the hosts, which only ever get their own sealed copies.
 
 ## Where things live
 
-| | in git | in /nix/store | on the host |
-|---|---|---|---|
-| source `.age` | yes | yes, world readable, encrypted to you | no |
-| sealed cache | yes | yes, world readable, encrypted to the host | yes |
-| identity | **no** | **no** | no |
-| host private key | no | no | yes |
-| plaintext | no | no | ramfs under `kix.mountPoint`, mode from the secret |
+Both the source `.age` files and the sealed cache are committed, and both end
+up world readable in `/nix/store` — that is what encryption is for. The source
+is encrypted to you, the cache to each host, and only the cache reaches the
+host.
 
-Both encrypted forms are world readable in the store; that is what encryption
-is for. The two things that must not be there are your identity and the
-plaintext, and neither is.
+Your identity and the plaintext are the two things that are in neither git nor
+the store. Plaintext exists only on ramfs under `kix.mountPoint`, with the mode
+and owner the secret declares — ramfs rather than tmpfs because tmpfs pages can
+be swapped out. Only the current generation is kept; older ones are removed
+after the symlink is swapped.
 
-Plaintext lands on ramfs rather than tmpfs because tmpfs pages can be swapped
-out. Only the current generation is kept; older ones are removed after the
-symlink is swapped.
-
-## Requirements
-
-`systemd.sysusers` or `services.userborn` must be enabled, so that the users
-owning secrets exist by the time they are deployed.
-
-Thanks [vaultix](https://github.com/milieuim/vaultix)
+Thanks [vaultix](https://github.com/milieuim/vaultix).
