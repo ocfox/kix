@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -33,32 +32,29 @@ const (
 	// a recipient, so the two can never be compared as equal by accident.
 	pluginStampPrefix = "plugin:"
 
-	// legacyPluginIdentity is what kix wrote for every plugin identity before
-	// identityStamp existed. See the migration in refreshRecipients.
+	// legacyPluginIdentity is what older kix stamped for any plugin identity.
 	legacyPluginIdentity = "<identity-based recipient>"
 )
 
-// identityStamp names an identity in the stamp, stably and without writing key
-// material into the repository.
-//
-// It deliberately does not go through the recipient. plugin.Identity.Recipient
-// returns a recipient whose String is the constant "<identity-based
-// recipient>", because a plugin recipient derived from an identity has no
-// recipient encoding to report. Stamping that meant every hardware token
-// looked alike, so rotating from one to another compared equal and the source
-// secrets were silently left encrypted to the old token.
-//
-// The identity encoding distinguishes them, but AGE-PLUGIN-... belongs to the
-// user, not to a file the repository commits, so stamp a hash of it instead.
-// Equality is all the stamp is ever asked for.
-func identityStamp(id age.Identity) string {
+// identityRecipient returns the recipient an identity encrypts to and the name
+// it takes in the stamp. An unknown type is an error: encrypting without the
+// user's own recipient produces files they cannot read.
+func identityRecipient(id age.Identity) (age.Recipient, string, error) {
 	switch id := id.(type) {
 	case *age.X25519Identity:
-		return id.Recipient().String()
+		r := id.Recipient()
+		return r, r.String(), nil
+	case *age.HybridIdentity:
+		r := id.Recipient()
+		return r, r.String(), nil
 	case *plugin.Identity:
-		return pluginStampPrefix + id.Name() + ":" + blake2bHex([]byte(id.String()))[:16]
+		// Every identity-derived plugin recipient stringifies alike, and the
+		// stamp is committed, so neither can be used as the name.
+		return id.Recipient(), pluginStampPrefix + id.Name() + ":" + blake2bHex([]byte(id.String()))[:16], nil
 	default:
-		return ""
+		return nil, "", fmt.Errorf("identity of type %T is parsed but not supported here: "+
+			"kix does not know what it encrypts to, and encrypting without it would "+
+			"produce files you cannot read", id)
 	}
 }
 
@@ -131,13 +127,9 @@ func refreshRecipients(
 
 	have := parseStamp(data)
 
-	// A stamp written before identityStamp records every plugin identity as
-	// the same placeholder, so it cannot say whether the token changed. Assume
-	// it did not and upgrade the stamp in place: the alternative is demanding
-	// --old-identity from everyone who upgrades kix, having just told them
-	// their secrets may be unreadable, on no evidence at all. A rotation
-	// performed before the upgrade is missed, and one performed after is
-	// caught.
+	// An older stamp cannot say whether the token changed, and accusing every
+	// upgrader of an unreadable secret on no evidence is worse than missing a
+	// rotation that happened before the upgrade.
 	upgraded := false
 	if have.identity == legacyPluginIdentity && strings.HasPrefix(want.identity, pluginStampPrefix) {
 		have.identity = want.identity
@@ -227,10 +219,13 @@ func recipientSet(m *manifest.Manifest, masterID age.Identity) (stamp, []age.Rec
 		s      stamp
 		recips []age.Recipient
 	)
-	if r := identityRecipient(masterID); r != nil {
-		recips = append(recips, r)
-		s.identity = identityStamp(masterID)
+	r, idStamp, err := identityRecipient(masterID)
+	if err != nil {
+		return stamp{}, nil, err
 	}
+	recips = append(recips, r)
+	s.identity = idStamp
+
 	for _, name := range m.ExtraRecipients {
 		r, err := parseRecipient(name, terminalUI())
 		if err != nil {
@@ -238,9 +233,6 @@ func recipientSet(m *manifest.Manifest, masterID age.Identity) (stamp, []age.Rec
 		}
 		recips = append(recips, r)
 		s.extra = append(s.extra, name)
-	}
-	if len(recips) == 0 {
-		return stamp{}, nil, errors.New("no recipients: the identity has none of its own and no extraRecipients are set")
 	}
 
 	slices.Sort(s.extra)

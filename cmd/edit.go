@@ -9,7 +9,6 @@ import (
 	"os/exec"
 
 	"filippo.io/age"
-	"filippo.io/age/plugin"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/blake2b"
 
@@ -63,10 +62,11 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 	}
 	masterID := idents[0]
 
-	var recips []age.Recipient
-	if r := identityRecipient(masterID); r != nil {
-		recips = append(recips, r)
+	ownRecip, _, err := identityRecipient(masterID)
+	if err != nil {
+		return err
 	}
+	recips := []age.Recipient{ownRecip}
 	for _, r := range recipients {
 		recip, err := parseRecipient(r, ui)
 		if err != nil {
@@ -143,17 +143,6 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 		slog.Info("created encrypted file", "path", file)
 	}
 	return nil
-}
-
-func identityRecipient(id age.Identity) age.Recipient {
-	switch id := id.(type) {
-	case *age.X25519Identity:
-		return id.Recipient()
-	case *plugin.Identity:
-		return id.Recipient()
-	default:
-		return nil
-	}
 }
 
 func blake2bHex(data []byte) string {

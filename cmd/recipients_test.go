@@ -27,12 +27,19 @@ func pluginIdentity(t *testing.T, name string, data []byte) *plugin.Identity {
 	return id
 }
 
-// Two hardware tokens must not stamp alike. Going through Recipient().String()
-// gave both the constant "<identity-based recipient>", which made rotating from
-// one to the other compare equal and left the sources encrypted to the old one.
+func stampNameFor(t *testing.T, id age.Identity) string {
+	t.Helper()
+	_, name, err := identityRecipient(id)
+	if err != nil {
+		t.Fatalf("identityRecipient: %v", err)
+	}
+	return name
+}
+
+// Two hardware tokens must not stamp alike.
 func TestIdentityStampDistinguishesPluginIdentities(t *testing.T) {
-	a := identityStamp(pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
-	b := identityStamp(pluginIdentity(t, "yubikey", []byte{4, 5, 6}))
+	a := stampNameFor(t, pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
+	b := stampNameFor(t, pluginIdentity(t, "yubikey", []byte{4, 5, 6}))
 
 	if a == b {
 		t.Errorf("two plugin identities stamped alike: %q", a)
@@ -46,8 +53,8 @@ func TestIdentityStampDistinguishesPluginIdentities(t *testing.T) {
 }
 
 func TestIdentityStampIsStable(t *testing.T) {
-	first := identityStamp(pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
-	second := identityStamp(pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
+	first := stampNameFor(t, pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
+	second := stampNameFor(t, pluginIdentity(t, "yubikey", []byte{1, 2, 3}))
 
 	if first != second {
 		t.Errorf("same identity stamped %q then %q", first, second)
@@ -59,7 +66,7 @@ func TestIdentityStampIsStable(t *testing.T) {
 func TestIdentityStampWithholdsTheIdentityEncoding(t *testing.T) {
 	id := pluginIdentity(t, "yubikey", []byte{1, 2, 3})
 
-	if got := identityStamp(id); strings.Contains(got, id.String()) {
+	if got := stampNameFor(t, id); strings.Contains(got, id.String()) {
 		t.Errorf("stamp %q contains the identity encoding", got)
 	}
 }
@@ -70,7 +77,7 @@ func TestIdentityStampX25519UsesTheRecipient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := identityStamp(id), id.Recipient().String(); got != want {
+	if got, want := stampNameFor(t, id), id.Recipient().String(); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
@@ -98,12 +105,11 @@ func readStampFile(t *testing.T, cache string) string {
 	return string(data)
 }
 
-// The regression itself: swapping tokens has to be noticed and reported, not
-// silently accepted.
+// The regression itself.
 func TestRefreshRecipientsDetectsPluginRotation(t *testing.T) {
 	cache := t.TempDir()
 	old := pluginIdentity(t, "yubikey", []byte{1, 2, 3})
-	writeStampFile(t, cache, (stamp{identity: identityStamp(old)}).String())
+	writeStampFile(t, cache, (stamp{identity: stampNameFor(t, old)}).String())
 
 	err := refreshStamp(t, cache, pluginIdentity(t, "yubikey", []byte{4, 5, 6}))
 	if err == nil {
@@ -117,7 +123,7 @@ func TestRefreshRecipientsDetectsPluginRotation(t *testing.T) {
 func TestRefreshRecipientsAcceptsUnchangedPluginIdentity(t *testing.T) {
 	cache := t.TempDir()
 	id := pluginIdentity(t, "yubikey", []byte{1, 2, 3})
-	want := (stamp{identity: identityStamp(id)}).String()
+	want := (stamp{identity: stampNameFor(t, id)}).String()
 	writeStampFile(t, cache, want)
 
 	if err := refreshStamp(t, cache, id); err != nil {
@@ -128,10 +134,8 @@ func TestRefreshRecipientsAcceptsUnchangedPluginIdentity(t *testing.T) {
 	}
 }
 
-// A stamp written by an older kix holds the placeholder for whichever token the
-// user has. It cannot say whether that token changed, so the upgrade must pass
-// rather than accuse, and must leave a fingerprint behind so the next rotation
-// is caught.
+// An older stamp cannot say whether the token changed, so the upgrade must pass
+// rather than accuse, and must still leave a fingerprint behind.
 func TestRefreshRecipientsUpgradesLegacyStamp(t *testing.T) {
 	cache := t.TempDir()
 	id := pluginIdentity(t, "yubikey", []byte{1, 2, 3})
@@ -145,12 +149,11 @@ func TestRefreshRecipientsUpgradesLegacyStamp(t *testing.T) {
 	if strings.Contains(got, legacyPluginIdentity) {
 		t.Fatalf("legacy placeholder left in place: %q", got)
 	}
-	want := (stamp{identity: identityStamp(id)}).String()
+	want := (stamp{identity: stampNameFor(t, id)}).String()
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	// Having upgraded, the next rotation is detected.
 	if err := refreshStamp(t, cache, pluginIdentity(t, "yubikey", []byte{4, 5, 6})); err == nil {
 		t.Error("rotation after the upgrade went unnoticed")
 	}
@@ -168,5 +171,31 @@ func TestRefreshRecipientsDoesNotUpgradeLegacyStampToX25519(t *testing.T) {
 	}
 	if err := refreshStamp(t, cache, id); err == nil {
 		t.Error("swapping a plugin identity for an X25519 one went unnoticed")
+	}
+}
+
+// A PQ identity is one parseIdentity accepts, so it must not fall through to
+// the extra recipients alone.
+func TestIdentityRecipientHybrid(t *testing.T) {
+	id, err := age.GenerateHybridIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, name, err := identityRecipient(id)
+	if err != nil {
+		t.Fatalf("hybrid identity rejected: %v", err)
+	}
+	if r == nil {
+		t.Error("no recipient returned")
+	}
+	if want := id.Recipient().String(); name != want {
+		t.Errorf("got %q, want %q", name, want)
+	}
+}
+
+func TestIdentityRecipientRejectsUnknown(t *testing.T) {
+	if _, _, err := identityRecipient(&countingIdentity{}); err == nil {
+		t.Error("an identity kix cannot derive a recipient from was accepted")
 	}
 }
