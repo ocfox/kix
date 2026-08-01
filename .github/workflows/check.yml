@@ -1,0 +1,33 @@
+name: check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # checks.nixos boots a VM. Without access to /dev/kvm qemu falls back to
+      # software emulation, which is slow enough to be worth avoiding.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@v31.11.0
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Covers the package build (which runs go test), treefmt, and the VM test.
+      - run: nix flake check --print-build-logs
