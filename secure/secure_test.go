@@ -140,6 +140,13 @@ func TestParsePermissions(t *testing.T) {
 		{"overflow", "33993", 0, true},
 		{"many leading zeros", "0000111", 0o111, false},
 		{"digit 8 in octal", "1000119", 0, true},
+		// Go's FileMode carries setuid, setgid and sticky in its own bits,
+		// not the octal ones, so these would be silently dropped on the way
+		// to the file. Refusing them beats deploying a mode nobody asked for.
+		{"setuid", "4755", 0, true},
+		{"setgid", "2750", 0, true},
+		{"sticky", "1777", 0, true},
+		{"largest usable mode", "0777", 0o777, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

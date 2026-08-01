@@ -58,11 +58,18 @@ func EncryptAge(plaintext []byte, recips ...age.Recipient) ([]byte, error) {
 
 // ParsePermissions reads an octal mode as written in Nix, with or without the
 // leading zero, so both "0400" and "400" mean the same thing.
+//
+// Anything above 0777 is refused rather than accepted and dropped: setuid,
+// setgid and sticky live in [os.FileMode]'s own bits, not in the octal ones,
+// so a mode like "4755" would reach the file as plain 0755.
 func ParsePermissions(s string) (uint32, error) {
-	s = strings.TrimPrefix(s, "0")
-	mode, err := strconv.ParseUint(s, 8, 32)
+	trimmed := strings.TrimPrefix(s, "0")
+	mode, err := strconv.ParseUint(trimmed, 8, 32)
 	if err != nil {
 		return 0, fmt.Errorf("parsing permissions %q: %w", s, err)
+	}
+	if mode > 0o777 {
+		return 0, fmt.Errorf("permissions %q are above 0777: setuid, setgid and sticky are not supported", s)
 	}
 	return uint32(mode), nil
 }
