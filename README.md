@@ -170,4 +170,18 @@ and owner the secret declares — ramfs rather than tmpfs because tmpfs pages ca
 be swapped out. Only the current generation is kept; older ones are removed
 after the symlink is swapped.
 
+On your own machine, `edit` decrypts into `$XDG_RUNTIME_DIR`, or `/dev/shm` if
+that is unset, so the plaintext stays in memory rather than landing somewhere a
+delete would only unlink. It warns and falls back to a temporary directory if
+neither is memory backed.
+
+### Your editor writes to disk, and kix cannot stop it
+
+`edit` only controls the file it hands over. Editors keep their own notes about
+what you were editing — swap files, undo history, backups, `viminfo`/`shada` —
+and those land wherever the editor puts them, usually under your home
+directory. Any of them can hold part of a secret.
+
+`$EDITOR` is whatever you make it, so kix cannot turn these off for you.
+
 Thanks [vaultix](https://github.com/milieuim/vaultix).
