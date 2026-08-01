@@ -1,7 +1,10 @@
+// Package cmd implements the kix command line: seal, edit, deploy and check,
+// along with the recipient and identity parsing they share.
 package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +22,8 @@ var rootCmd = &cobra.Command{
 	Short: "Secret manager for NixOS",
 }
 
+// Execute runs the root command. Errors are already reported by cobra, so it
+// only sets the exit status.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -55,7 +60,7 @@ func parseRecipient(s string, ui *plugin.ClientUI) (age.Recipient, error) {
 func parseIdentityFile(name string, ui *plugin.ClientUI) ([]age.Identity, error) {
 	f, err := os.Open(name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %v", err)
+		return nil, fmt.Errorf("opening identities file %q: %w", name, err)
 	}
 	defer f.Close()
 
@@ -66,11 +71,11 @@ func parseIdentityFile(name string, ui *plugin.ClientUI) ([]age.Identity, error)
 		const sizeLimit = 1 << 14
 		contents, err := io.ReadAll(io.LimitReader(b, sizeLimit))
 		if err != nil {
-			return nil, fmt.Errorf("failed to read %q: %v", name, err)
+			return nil, fmt.Errorf("reading %q: %w", name, err)
 		}
 		id, err := agessh.ParseIdentity(contents)
 		if err != nil {
-			return nil, fmt.Errorf("malformed SSH identity in %q: %v", name, err)
+			return nil, fmt.Errorf("parsing SSH identity in %q: %w", name, err)
 		}
 		return []age.Identity{id}, nil
 	}
@@ -86,22 +91,22 @@ func parseIdentityFile(name string, ui *plugin.ClientUI) ([]age.Identity, error)
 			continue
 		}
 		if !utf8.ValidString(line) {
-			return nil, fmt.Errorf("identities file is not valid UTF-8")
+			return nil, errors.New("identities file is not valid UTF-8")
 		}
 		id, err := parseIdentity(line, ui)
 		if err != nil {
 			if strings.HasPrefix(line, "age1") {
 				return nil, fmt.Errorf("line %d: apparent recipient in identities file", n)
 			}
-			return nil, fmt.Errorf("line %d: %v", n, err)
+			return nil, fmt.Errorf("line %d: %w", n, err)
 		}
 		ids = append(ids, id)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read identities file: %v", err)
+		return nil, fmt.Errorf("reading identities file %q: %w", name, err)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("no identities found")
+		return nil, errors.New("no identities found")
 	}
 	return ids, nil
 }
@@ -115,6 +120,6 @@ func parseIdentity(s string, ui *plugin.ClientUI) (age.Identity, error) {
 	case strings.HasPrefix(s, "AGE-SECRET-KEY-PQ-1"):
 		return age.ParseHybridIdentity(s)
 	default:
-		return nil, fmt.Errorf("unknown identity type")
+		return nil, errors.New("unknown identity type")
 	}
 }

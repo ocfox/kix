@@ -1,3 +1,6 @@
+// Package secure holds the cryptographic and filesystem primitives shared by
+// the commands: age encryption and decryption, the cache naming hash, and
+// writing a plaintext out with the ownership and mode a secret asks for.
 package secure
 
 import (
@@ -17,6 +20,10 @@ import (
 	"github.com/ocfox/kix/profile"
 )
 
+// HashSecret names the cache entry for a source secret sealed to a given host.
+//
+// Both inputs matter: the same ciphertext sealed to two hosts must land in two
+// entries, and a changed source must not reuse the old host's entry.
 func HashSecret(content []byte, hostRecipient string) string {
 	h, _ := blake2b.New256(nil)
 	h.Write(content)
@@ -24,42 +31,49 @@ func HashSecret(content []byte, hostRecipient string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// DecryptAge decrypts an age file with the first of idents that can read it.
 func DecryptAge(encrypted []byte, idents ...age.Identity) ([]byte, error) {
 	r, err := age.Decrypt(bytes.NewReader(encrypted), idents...)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
+		return nil, fmt.Errorf("decrypting: %w", err)
 	}
 	return io.ReadAll(r)
 }
 
+// EncryptAge encrypts plaintext to every recipient in recips.
 func EncryptAge(plaintext []byte, recips ...age.Recipient) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	w, err := age.Encrypt(buf, recips...)
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+		return nil, fmt.Errorf("encrypting: %w", err)
 	}
 	if _, err := w.Write(plaintext); err != nil {
-		return nil, fmt.Errorf("write: %w", err)
+		return nil, fmt.Errorf("writing ciphertext: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("close: %w", err)
+		return nil, fmt.Errorf("closing ciphertext: %w", err)
 	}
 	return buf.Bytes(), nil
 }
 
+// ParsePermissions reads an octal mode as written in Nix, with or without the
+// leading zero, so both "0400" and "400" mean the same thing.
 func ParsePermissions(s string) (uint32, error) {
 	s = strings.TrimPrefix(s, "0")
 	mode, err := strconv.ParseUint(s, 8, 32)
 	if err != nil {
-		return 0, fmt.Errorf("parse permissions %q: %w", s, err)
+		return 0, fmt.Errorf("parsing permissions %q: %w", s, err)
 	}
 	return uint32(mode), nil
 }
 
+// DeployToFS writes a decrypted secret to dst with the mode, owner and group
+// the secret declares. It removes dst rather than leaving a plaintext behind
+// under ownership nobody asked for.
 func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 	perm, err := ParsePermissions(secret.Mode)
 	if err != nil {
-		return fmt.Errorf("parse mode %q: %w", secret.Mode, err)
+		return err
 	}
 
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(perm))

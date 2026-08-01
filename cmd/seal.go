@@ -21,6 +21,10 @@ var (
 	sealOldIdentity string
 )
 
+// hostPlan maps a secret id to the cache path it should be sealed into for one
+// host.
+type hostPlan = map[string]string
+
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Re-encrypt secrets for each host",
@@ -71,7 +75,6 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 	}
 
 	// Build plan: hostID -> {secretID -> destPath}
-	type hostPlan = map[string]string
 	plan := make(map[string]hostPlan)
 	for _, p := range allProfiles {
 		hostID := p.HostName
@@ -108,7 +111,9 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 			path := filepath.Join(hostDir, e.Name())
 			if !current[path] {
 				slog.Debug("removing outdated", "path", path)
-				os.Remove(path)
+				if err := os.Remove(path); err != nil {
+					slog.Warn("removing outdated cache entry", "path", path, "error", err)
+				}
 			}
 		}
 	}
@@ -162,15 +167,15 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 				}
 				encrypted, err := secure.EncryptAge(plaintexts[id], recip)
 				if err != nil {
-					fail(fmt.Errorf("encrypt %s for %s: %w", id, hostID, err))
+					fail(fmt.Errorf("encrypting %q for host %q: %w", id, hostID, err))
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-					fail(fmt.Errorf("mkdir for %s: %w", id, err))
+					fail(fmt.Errorf("creating cache dir for %q: %w", id, err))
 					continue
 				}
 				if err := os.WriteFile(dstPath, encrypted, 0o644); err != nil {
-					fail(fmt.Errorf("write %s: %w", dstPath, err))
+					fail(fmt.Errorf("writing %q: %w", dstPath, err))
 					continue
 				}
 				slog.Info("sealed", "secret", id, "host", hostID)
@@ -198,7 +203,7 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 // also means a secret shared by N hosts costs N token interactions.
 func decryptOnce(
 	ciphertexts map[string][]byte,
-	missing map[string]map[string]string,
+	missing map[string]hostPlan,
 	id age.Identity,
 ) (map[string][]byte, error) {
 	plaintexts := make(map[string][]byte)
@@ -209,7 +214,7 @@ func decryptOnce(
 			}
 			plaintext, err := secure.DecryptAge(ciphertexts[secretID], id)
 			if err != nil {
-				return nil, fmt.Errorf("decrypt %s: %w", secretID, err)
+				return nil, fmt.Errorf("decrypting %q: %w", secretID, err)
 			}
 			plaintexts[secretID] = plaintext
 		}

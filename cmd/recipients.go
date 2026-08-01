@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"filippo.io/age"
@@ -89,7 +90,7 @@ func refreshRecipients(
 		// a missing file would be a bad first impression.
 		return writeStamp(stampPath, want)
 	case err != nil:
-		return fmt.Errorf("reading %s: %w", stampPath, err)
+		return fmt.Errorf("reading %q: %w", stampPath, err)
 	}
 
 	have := parseStamp(data)
@@ -137,14 +138,14 @@ func refreshRecipients(
 
 			plaintext, err := secure.DecryptAge(ciphertexts[id], decryptID)
 			if err != nil {
-				return fmt.Errorf("decrypting %s for re-encryption: %w", id, err)
+				return fmt.Errorf("decrypting %q for re-encryption: %w", id, err)
 			}
 			reencrypted, err := secure.EncryptAge(plaintext, recips...)
 			if err != nil {
-				return fmt.Errorf("re-encrypting %s: %w", id, err)
+				return fmt.Errorf("re-encrypting %q: %w", id, err)
 			}
 			if err := os.WriteFile(s.SourcePath, reencrypted, 0o644); err != nil {
-				return fmt.Errorf("writing %s: %w", s.SourcePath, err)
+				return fmt.Errorf("writing %q: %w", s.SourcePath, err)
 			}
 			written[s.SourcePath] = reencrypted
 			ciphertexts[id] = reencrypted
@@ -157,10 +158,10 @@ func refreshRecipients(
 
 func writeStamp(path string, s stamp) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+		return fmt.Errorf("creating %q: %w", filepath.Dir(path), err)
 	}
 	if err := os.WriteFile(path, []byte(s.String()), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+		return fmt.Errorf("writing %q: %w", path, err)
 	}
 	return nil
 }
@@ -185,9 +186,9 @@ func recipientSet(m *manifest.Manifest, masterID age.Identity) (stamp, []age.Rec
 		s.extra = append(s.extra, name)
 	}
 	if len(recips) == 0 {
-		return stamp{}, nil, fmt.Errorf("no recipients: the identity has none of its own and no extraRecipients are set")
+		return stamp{}, nil, errors.New("no recipients: the identity has none of its own and no extraRecipients are set")
 	}
 
-	sort.Strings(s.extra)
+	slices.Sort(s.extra)
 	return s, recips, nil
 }

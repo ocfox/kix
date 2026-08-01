@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"filippo.io/age"
@@ -17,7 +18,7 @@ import (
 )
 
 var (
-	early         bool
+	deployEarly   bool
 	deployProfile string
 )
 
@@ -25,13 +26,13 @@ var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Decrypt and deploy secrets",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeploy(deployProfile, early)
+		return runDeploy(deployProfile, deployEarly)
 	},
 }
 
 func init() {
 	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile of the host to deploy")
-	deployCmd.Flags().BoolVarP(&early, "early", "e", false, "deploy before users init")
+	deployCmd.Flags().BoolVarP(&deployEarly, "early", "e", false, "deploy before users init")
 	deployCmd.MarkFlagRequired("profile")
 }
 
@@ -64,7 +65,7 @@ func runDeploy(profilePath string, earlyMode bool) error {
 
 	if fi, err := os.Lstat(symlinkDst); err == nil {
 		if fi.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("%s exists and is not a symlink", symlinkDst)
+			return fmt.Errorf("%q exists and is not a symlink", symlinkDst)
 		}
 	}
 
@@ -81,19 +82,19 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		// Original .age file gives us the hash that names the re-encrypted cache entry
 		original, err := os.ReadFile(s.File)
 		if err != nil {
-			return fmt.Errorf("reading secret file %s: %w", id, err)
+			return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
 		}
 		encPath := filepath.Join(p.CacheInStore, secure.HashSecret(original, p.HostPubkey))
 
 		encrypted, err := os.ReadFile(encPath)
 		if err != nil {
-			return fmt.Errorf("reading cache for %s: %w", id, err)
+			return fmt.Errorf("reading cache entry for %q (%s): %w", id, encPath, err)
 		}
 
 		if verifiedIdent != nil {
 			plaintext, err := secure.DecryptAge(encrypted, verifiedIdent)
 			if err != nil {
-				return fmt.Errorf("decrypting %s: %w", id, err)
+				return fmt.Errorf("decrypting %q: %w", id, err)
 			}
 			plainMap[id] = plaintext
 			continue
@@ -109,7 +110,7 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		}
 		if plainMap[id] == nil {
 			return fmt.Errorf(
-				"no host key can decrypt secret %s: it was sealed to %q, "+
+				"no host key can decrypt secret %q: it was sealed to %q, "+
 					"but none of this host's keys (%s) matches. "+
 					"kix.hostPubkey is not the public half of a key in kix.hostKeys",
 				id, strings.TrimSpace(p.HostPubkey), strings.Join(hostKeyPaths(p), ", "))
@@ -135,7 +136,7 @@ func runDeploy(profilePath string, earlyMode bool) error {
 	}
 
 	if err := replaceSymlink(genDir, symlinkDst); err != nil {
-		return fmt.Errorf("pointing %s at %s: %w", symlinkDst, genDir, err)
+		return fmt.Errorf("pointing %q at %q: %w", symlinkDst, genDir, err)
 	}
 
 	pruneGenerations(filepath.Dir(genDir), genDir)
@@ -181,7 +182,7 @@ func pruneGenerations(genBase, keep string) {
 func replaceSymlink(target, name string) error {
 	tmp := name + ".tmp"
 	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("clearing %s: %w", tmp, err)
+		return fmt.Errorf("clearing %q: %w", tmp, err)
 	}
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
@@ -234,19 +235,19 @@ const ramfsMagic = 0x858458f6
 // cannot, which is the whole reason for mounting anything here.
 func ensureRamfs(mountPoint string) error {
 	if err := os.MkdirAll(mountPoint, 0o751); err != nil {
-		return fmt.Errorf("creating mount point %s: %w", mountPoint, err)
+		return fmt.Errorf("creating mount point %q: %w", mountPoint, err)
 	}
 
 	var st unix.Statfs_t
 	if err := unix.Statfs(mountPoint, &st); err != nil {
-		return fmt.Errorf("statfs %s: %w", mountPoint, err)
+		return fmt.Errorf("statfs %q: %w", mountPoint, err)
 	}
 	if st.Type == ramfsMagic {
 		return nil
 	}
 
 	if err := unix.Mount("ramfs", mountPoint, "ramfs", unix.MS_NOSUID, "mode=751"); err != nil {
-		return fmt.Errorf("mounting ramfs at %s: %w", mountPoint, err)
+		return fmt.Errorf("mounting ramfs at %q: %w", mountPoint, err)
 	}
 	return nil
 }
@@ -263,23 +264,28 @@ func nextGenDir(mountPoint string, early bool) (string, error) {
 	}
 
 	if err := os.MkdirAll(genBase, 0o751); err != nil {
-		return "", fmt.Errorf("creating %s: %w", genBase, err)
+		return "", fmt.Errorf("creating %q: %w", genBase, err)
 	}
 
-	entries, _ := os.ReadDir(genBase)
-	max := 0
+	entries, err := os.ReadDir(genBase)
+	if err != nil {
+		return "", fmt.Errorf("listing generations in %q: %w", genBase, err)
+	}
+	next := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		var n int
-		fmt.Sscanf(e.Name(), "%d", &n)
-		if n >= max {
-			max = n + 1
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if n >= next {
+			next = n + 1
 		}
 	}
 
-	genDir := filepath.Join(genBase, fmt.Sprintf("%d", max))
+	genDir := filepath.Join(genBase, strconv.Itoa(next))
 	if err := os.MkdirAll(genDir, 0o751); err != nil {
 		return "", fmt.Errorf("creating generation dir: %w", err)
 	}
