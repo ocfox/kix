@@ -47,7 +47,7 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 		return err
 	}
 
-	idents, err := parseIdentityFile(m.Identity, terminalUI())
+	idents, err := parseIdentityFile(m.Identity, terminalUI(), askPassphrase)
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}

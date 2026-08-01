@@ -47,6 +47,8 @@ func identityRecipient(id age.Identity) (age.Recipient, string, error) {
 	case *age.HybridIdentity:
 		r := id.Recipient()
 		return r, r.String(), nil
+	case *sshIdentity:
+		return id.recipient, id.name(), nil
 	case *plugin.Identity:
 		// Every identity-derived plugin recipient stringifies alike, and the
 		// stamp is committed, so neither can be used as the name.
@@ -157,7 +159,7 @@ func refreshRecipients(
 					"you must still hold the old identity; nothing else can read those files",
 				have.identity, want.identity)
 		}
-		idents, err := parseIdentityFile(oldIdentityPath, terminalUI())
+		idents, err := parseIdentityFile(oldIdentityPath, terminalUI(), askPassphrase)
 		if err != nil {
 			return fmt.Errorf("parsing --old-identity: %w", err)
 		}

@@ -2,3 +2,4 @@
 /test.age
 *.test
 *.out
+/result
