@@ -59,6 +59,7 @@
             };
 
             checks.nixos = pkgs.testers.runNixOSTest ./tests/deploy.nix;
+            checks.rotate = pkgs.callPackage ./tests/rotate.nix { kix = self'.packages.kix; };
           };
 
         flake = {
