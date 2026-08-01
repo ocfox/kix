@@ -71,7 +71,7 @@ in
             identity = mkOption {
               type = with types; nullOr path;
               default = null;
-              example = "./identity.txt";
+              example = "/home/you/.config/age/kix-identity.txt";
               description = "Age identity used to decrypt the source .age files.";
             };
             cache = mkOption {
