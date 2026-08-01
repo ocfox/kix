@@ -58,8 +58,6 @@
               programs.gofmt.enable = true;
             };
 
-            # `go test ./...` runs as part of the package build (doCheck), so
-            # this covers the integration side the unit tests cannot reach.
             checks.nixos = pkgs.testers.runNixOSTest ./tests/deploy.nix;
           };
 
@@ -70,8 +68,6 @@
             kix = final.callPackage ./package.nix { };
           };
 
-          # Usable standalone: `kix.package` defaults to a callPackage against
-          # whatever nixpkgs the importing configuration already uses.
           nixosModules = rec {
             default = ./module;
             kix = default;

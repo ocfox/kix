@@ -1,6 +1,5 @@
-# End-to-end test: seal a secret at build time, then boot a machine that
-# deploys it. Keys under ./fixtures are throwaway test material, generated once
-# and committed so everything below is available at evaluation time.
+# Seals a secret at build time, then boots a machine that deploys it.
+# ./fixtures holds throwaway keys, committed so they are readable at eval time.
 { lib, ... }:
 let
   hostPubkey = builtins.readFile ./fixtures/ssh_host_ed25519_key.pub;
@@ -15,9 +14,8 @@ in
     let
       kix = config.kix.package;
 
-      # Sealing needs only the host recipient and the source .age file, so this
-      # profile is written by hand rather than taken from config.kix.profile —
-      # the latter depends on cacheRoot, which is what we are producing here.
+      # Hand-written rather than config.kix.profile: that depends on cacheRoot,
+      # which is what this produces.
       sealProfile = pkgs.writeText "seal-profile.json" (
         builtins.toJSON {
           settings = {
@@ -87,16 +85,12 @@ in
   testScript = ''
     machine.wait_for_unit("kix-activate.service")
 
-    # Decrypted with the host key and placed at the configured path.
     machine.succeed("test -f /run/kix/test")
     assert machine.succeed("cat /run/kix/test") == "${payload}"
 
-    # Ownership and mode come from the profile, not from the process umask.
-    # Mode from the profile, owner from `owner`, group from the owner's primary
-    # group (the default, not set explicitly below).
+    # group is the owner's primary group, i.e. the default, not set below.
     assert machine.succeed("stat -c %U:%G:%a /run/kix/test").strip() == "kixtest:kixtest:400"
 
-    # /run/kix is a symlink into the generation directory, which lives on ramfs.
     machine.succeed("test -L /run/kix")
     machine.succeed("stat -f -c %T /run/kix.d | grep -q ramfs")
   '';

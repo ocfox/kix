@@ -7,8 +7,6 @@ buildGoModule {
   pname = "kix";
   version = "0-unstable-2026-08-01";
 
-  # Narrow the source so unrelated files (README, LICENSE, flake plumbing)
-  # do not invalidate the build.
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [

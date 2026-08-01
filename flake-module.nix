@@ -1,7 +1,5 @@
-# flake-parts module, imported by consumers as `inputs.kix.flakeModules.default`.
-#
 # `kixSrc` is applied by kix's own flake via `importApply`, so this module can
-# reach kix's source (package.nix, module/) without dragging in kix's nixpkgs.
+# reach kix's source without dragging in kix's nixpkgs.
 { kixSrc }:
 {
   lib,
@@ -15,9 +13,8 @@ let
 
   cfg = config.flake.kix;
 
-  # Nodes that actually use kix. This forces evaluation of every
-  # nixosConfiguration in `nodes`, which is inherent: sealing needs every host's
-  # secrets. Narrow `flake.kix.nodes` if that becomes expensive.
+  # Forces evaluation of every nixosConfiguration in `nodes`; narrow
+  # `flake.kix.nodes` if that gets expensive.
   kixNodes = lib.filter (v: v.config ? kix) (lib.attrValues cfg.nodes);
 
   identity =
@@ -107,8 +104,7 @@ in
         }
       );
 
-      # `flake.kix.cache` is relative to the flake root, so seal has to run from
-      # there rather than wherever the user happened to invoke `nix run`.
+      # `flake.kix.cache` is relative to the flake root, not to $PWD.
       seal = pkgs.writeShellApplication {
         name = "kix-seal";
         runtimeInputs = [ pkgs.git ];
@@ -118,8 +114,7 @@ in
         '';
       };
 
-      # edit takes an explicit file argument and never touches the cache, so it
-      # deliberately does not cd: a relative path stays relative to the caller.
+      # No cd, unlike seal: edit's file argument stays relative to the caller.
       edit = pkgs.writeShellApplication {
         name = "kix-edit";
         text = ''

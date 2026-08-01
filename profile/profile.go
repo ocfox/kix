@@ -1,8 +1,5 @@
-// Package profile describes the per-host input kix receives from Nix.
-//
-// The shape here mirrors the `kix.profile` option in module/default.nix, which
-// is an explicit projection rather than a dump of the whole option tree, so
-// adding a NixOS option does not change the wire format.
+// Package profile describes the per-host input kix receives from Nix. The
+// shape mirrors the `kix.profile` option in module/default.nix.
 package profile
 
 import (

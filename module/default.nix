@@ -21,9 +21,8 @@ let
     ;
 
   cfg = config.kix;
-  # `config.users.users`, not `config.users`: the latter is the option tree
-  # (users/groups/mutableUsers), so the group default never resolved and every
-  # secret silently ended up group-root.
+  # `.users.users`: `config.users` is the option tree, so indexing it by a user
+  # name always misses and the group default silently becomes root.
   users = config.users.users;
 
   settingsType = types.submodule {
@@ -42,9 +41,8 @@ let
               from `flake.kix.cache`), or set `kix.cacheRoot` by hand.
             ''
           else if builtins.pathExists path then
-            # Import only this host's subdirectory rather than referring to
-            # "${self}/..." directly, so the derivation does not depend on the
-            # whole flake source.
+            # Imports just this host's subdirectory, so the derivation does not
+            # depend on the whole flake source.
             builtins.path { inherit path; }
           else
             warn ''
@@ -54,8 +52,8 @@ let
         description = "Secrets re-encrypted by host public key. In nix store.";
       };
 
-      # `str`, not `path`: these live on the target machine, never in the store,
-      # and a bare Nix path literal here would import the runtime directory.
+      # `str`, not `path`: these are runtime paths on the target, and `path`
+      # would import the directory into the store.
       decryptedDir = mkOption {
         type = types.str;
         default = "/run/kix";
@@ -211,9 +209,8 @@ in
       description = "IDs of secrets to deploy before user init.";
     };
 
-    # The wire format between Nix and the kix binary. Written out explicitly
-    # rather than serialising `cfg` wholesale, so that adding an option above
-    # changes neither the on-disk format nor every host's profile hash.
+    # The wire format read by the kix binary. An explicit projection, so adding
+    # an option above does not change it.
     profile = mkOption {
       internal = true;
       readOnly = true;
@@ -256,10 +253,8 @@ in
 
   config =
     let
-      # Fails the build if any secret is unsealed, so `nixos-rebuild` stops here
-      # rather than producing a system whose kix-activate fails at boot. Runs
-      # cfg.package on the build machine, so as before it does not work when the
-      # host and build platforms differ.
+      # Fails the build if any secret is unsealed, rather than at boot. Runs
+      # cfg.package on the builder, so it does not survive cross-compilation.
       checkSealed =
         pkgs.runCommandLocal "kix-seal-check-${cfg.settings.hostIdentifier}" { }
           "${lib.getExe cfg.package} check --profile ${cfg.profileFile} > $out";
@@ -277,8 +272,7 @@ in
         }
       ];
 
-      # `system.checks` gates the build without pulling the report into the
-      # system closure, which the old SEAL_CHECK environment variable did.
+      # Gates the build without entering the system closure.
       system.checks = [ checkSealed ];
 
       systemd.services.kix-activate = {
