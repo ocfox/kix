@@ -1,3 +1,5 @@
+// Package profile describes the per-host input kix receives from Nix. The
+// shape mirrors the `kix.profile` option in module/default.nix.
 package profile
 
 import (
@@ -35,18 +37,26 @@ type Secret struct {
 	Path  string `json:"path"`
 }
 
-func LoadProfiles(paths []string) ([]*Profile, error) {
-	var profiles []*Profile
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
+func Load(path string) (*Profile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading profile %q: %w", path, err)
+	}
+	var p Profile
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, fmt.Errorf("parsing profile %q: %w", path, err)
+	}
+	return &p, nil
+}
+
+func LoadAll(paths []string) ([]*Profile, error) {
+	profiles := make([]*Profile, 0, len(paths))
+	for _, path := range paths {
+		p, err := Load(path)
 		if err != nil {
-			return nil, fmt.Errorf("reading profile %q: %w", p, err)
+			return nil, err
 		}
-		var profile Profile
-		if err := json.Unmarshal(data, &profile); err != nil {
-			return nil, fmt.Errorf("parsing profile %q: %w", p, err)
-		}
-		profiles = append(profiles, &profile)
+		profiles = append(profiles, p)
 	}
 	return profiles, nil
 }

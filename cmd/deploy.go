@@ -15,30 +15,30 @@ import (
 	"github.com/ocfox/kix/secure"
 )
 
-var early bool
+var (
+	early         bool
+	deployProfile string
+)
 
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Decrypt and deploy secrets",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runDeploy(early)
+		return runDeploy(deployProfile, early)
 	},
 }
 
 func init() {
+	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile of the host to deploy")
 	deployCmd.Flags().BoolVarP(&early, "early", "e", false, "deploy before users init")
+	deployCmd.MarkFlagRequired("profile")
 }
 
-func runDeploy(earlyMode bool) error {
-	if len(profiles) != 1 {
-		return fmt.Errorf("deploy requires exactly one profile, got %d", len(profiles))
-	}
-
-	allProfiles, err := profile.LoadProfiles(profiles)
+func runDeploy(profilePath string, earlyMode bool) error {
+	p, err := profile.Load(profilePath)
 	if err != nil {
 		return err
 	}
-	p := allProfiles[0]
 
 	if earlyMode && len(p.BeforeUserborn) == 0 {
 		slog.Info("nothing to deploy before userborn")

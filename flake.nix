@@ -4,28 +4,23 @@
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    inputs@{
-      flake-parts,
-      self,
-      ...
-    }:
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } (
-      {
-        flake-parts-lib,
-        withSystem,
-        ...
-      }:
+      { flake-parts-lib, ... }:
       let
         inherit (flake-parts-lib) importApply;
-        flakeModules.default = importApply ./flake-module.nix {
-          inherit (self) packages;
-          inherit withSystem;
-        };
+        flakeModules.default = importApply ./flake-module.nix { kixSrc = ./.; };
       in
       {
+        imports = [ inputs.treefmt-nix.flakeModule ];
+
         systems = [
           "x86_64-linux"
           "aarch64-linux"
@@ -38,45 +33,43 @@
             self',
             ...
           }:
-          let
-            pname = "kix";
-            version = "0-unstable";
-          in
           {
+            packages = rec {
+              default = pkgs.callPackage ./package.nix { };
+              kix = default;
+            };
+
             apps.default = {
               type = "app";
               program = lib.getExe self'.packages.default;
             };
 
-            packages = rec {
-              default = pkgs.buildGoModule {
-                inherit pname version;
-                src = ./.;
-                vendorHash = "sha256-foF4ECTT2j/DPynBKjbYf8hM8OoCxCRRgWjQ4BCUtcs=";
-                meta.mainProgram = "kix";
-              };
-              kix = default;
-            };
-
             devShells.default = pkgs.mkShell {
-              buildInputs = with pkgs; [
+              packages = with pkgs; [
                 go
                 golangci-lint
                 gotestsum
               ];
             };
+
+            treefmt = {
+              projectRootFile = "flake.nix";
+              programs.nixfmt.enable = true;
+              programs.gofmt.enable = true;
+            };
+
+            checks.nixos = pkgs.testers.runNixOSTest ./tests/deploy.nix;
           };
 
         flake = {
           inherit flakeModules;
 
+          overlays.default = final: _prev: {
+            kix = final.callPackage ./package.nix { };
+          };
+
           nixosModules = rec {
-            default =
-              { pkgs, ... }:
-              {
-                imports = [ ./module ];
-                kix.package = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.kix);
-              };
+            default = ./module;
             kix = default;
           };
         };
