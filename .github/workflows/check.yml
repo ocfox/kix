@@ -12,6 +12,9 @@ concurrency:
 jobs:
   flake-check:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -24,10 +27,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: cachix/install-nix-action@v31.11.0
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+      # magic-nix-cache backs onto the Actions cache, so nothing is rebuilt
+      # between runs and there is no account or token. It documents only this
+      # installer.
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
 
       # Covers the package build (which runs go test), treefmt, and the VM test.
       - run: nix flake check --print-build-logs
