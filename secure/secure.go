@@ -91,32 +91,51 @@ func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 // alice:alice becomes 0640 root:root, so the service it was written for cannot
 // read it, and a group that was supposed to be restricted becomes root's.
 func setOwnerAndGroup(fd uintptr, ownerName, groupName string) error {
-	uid, gid := 0, 0
-
-	if ownerName != "" {
-		u, err := user.Lookup(ownerName)
-		if err != nil {
-			return fmt.Errorf("looking up owner %q: %w", ownerName, err)
-		}
-		uid, err = strconv.Atoi(u.Uid)
-		if err != nil {
-			return fmt.Errorf("owner %q has non-numeric uid %q: %w", ownerName, u.Uid, err)
-		}
+	uid, err := lookupUID(ownerName)
+	if err != nil {
+		return err
 	}
-
-	if groupName != "" {
-		g, err := user.LookupGroup(groupName)
-		if err != nil {
-			return fmt.Errorf("looking up group %q: %w", groupName, err)
-		}
-		gid, err = strconv.Atoi(g.Gid)
-		if err != nil {
-			return fmt.Errorf("group %q has non-numeric gid %q: %w", groupName, g.Gid, err)
-		}
+	gid, err := lookupGID(groupName)
+	if err != nil {
+		return err
 	}
 
 	if err := unix.Fchown(int(fd), uid, gid); err != nil {
 		return fmt.Errorf("fchown: %w", err)
 	}
 	return nil
+}
+
+// root is resolved without consulting NSS. It is uid/gid 0 by definition, and
+// the pre-userborn deployment runs before /etc/passwd exists, where every
+// lookup fails -- including the one for root, which is the only owner such a
+// secret is allowed to have.
+func lookupUID(name string) (int, error) {
+	if name == "" || name == "root" {
+		return 0, nil
+	}
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, fmt.Errorf("looking up owner %q: %w", name, err)
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return 0, fmt.Errorf("owner %q has non-numeric uid %q: %w", name, u.Uid, err)
+	}
+	return uid, nil
+}
+
+func lookupGID(name string) (int, error) {
+	if name == "" || name == "root" {
+		return 0, nil
+	}
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, fmt.Errorf("looking up group %q: %w", name, err)
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return 0, fmt.Errorf("group %q has non-numeric gid %q: %w", name, g.Gid, err)
+	}
+	return gid, nil
 }
