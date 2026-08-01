@@ -12,31 +12,36 @@ import (
 	"github.com/ocfox/kix/secure"
 )
 
+var checkProfile string
+
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check secret status",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runCheck()
+		return runCheck(checkProfile)
 	},
 }
 
-func runCheck() error {
-	allProfiles, err := profile.LoadProfiles(profiles)
+func init() {
+	checkCmd.Flags().StringVarP(&checkProfile, "profile", "p", "", "profile of the host to check")
+	checkCmd.MarkFlagRequired("profile")
+}
+
+func runCheck(profilePath string) error {
+	p, err := profile.Load(profilePath)
 	if err != nil {
 		return err
 	}
 
 	var missing []string
-	for _, p := range allProfiles {
-		for id, s := range p.Secrets {
-			original, err := os.ReadFile(s.File)
-			if err != nil {
-				return fmt.Errorf("reading secret file %s: %w", id, err)
-			}
-			path := filepath.Join(p.Settings.CacheInStore, secure.HashSecret(original, p.Settings.HostPubkey))
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				missing = append(missing, path)
-			}
+	for id, s := range p.Secrets {
+		original, err := os.ReadFile(s.File)
+		if err != nil {
+			return fmt.Errorf("reading secret file %s: %w", id, err)
+		}
+		path := filepath.Join(p.Settings.CacheInStore, secure.HashSecret(original, p.Settings.HostPubkey))
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			missing = append(missing, path)
 		}
 	}
 

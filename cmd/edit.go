@@ -12,10 +12,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/blake2b"
 
+	"github.com/ocfox/kix/manifest"
 	"github.com/ocfox/kix/secure"
 )
 
 var (
+	editManifest   string
 	editIdentity   string
 	editRecipients []string
 )
@@ -25,17 +27,34 @@ var editCmd = &cobra.Command{
 	Short: "Edit encrypted file",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runEdit(args[0], editIdentity, editRecipients)
+		return runEdit(args[0], editManifest, editIdentity, editRecipients)
 	},
 }
 
 func init() {
-	editCmd.Flags().StringVarP(&editIdentity, "identity", "i", "", "identity for decryption")
-	editCmd.Flags().StringSliceVarP(&editRecipients, "recipient", "r", nil, "recipients for re-encryption (can be repeated)")
+	editCmd.Flags().StringVarP(&editManifest, "manifest", "m", "", "manifest to take identity and recipients from")
+	editCmd.Flags().StringVarP(&editIdentity, "identity", "i", "", "identity for decryption (overrides --manifest)")
+	editCmd.Flags().StringSliceVarP(&editRecipients, "recipient", "r", nil, "extra recipients for re-encryption (overrides --manifest, can be repeated)")
 }
 
-func runEdit(file, identityPath string, recipients []string) error {
+func runEdit(file, manifestPath, identityPath string, recipients []string) error {
 	ui := terminalUI()
+
+	if manifestPath != "" {
+		m, err := manifest.Load(manifestPath)
+		if err != nil {
+			return err
+		}
+		if identityPath == "" {
+			identityPath = m.Identity
+		}
+		if recipients == nil {
+			recipients = m.ExtraRecipients
+		}
+	}
+	if identityPath == "" {
+		return fmt.Errorf("no identity: pass --identity or --manifest")
+	}
 
 	idents, err := parseIdentityFile(identityPath, ui)
 	if err != nil {

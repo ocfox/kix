@@ -4,7 +4,7 @@
   pkgs,
   lib,
   ...
-}@args:
+}:
 let
   inherit (lib)
     all
@@ -20,9 +20,11 @@ let
     mkIf
     ;
 
-  self = args.self or args.inputs.self;
   cfg = config.kix;
-  users = config.users;
+  # `config.users.users`, not `config.users`: the latter is the option tree
+  # (users/groups/mutableUsers), so the group default never resolved and every
+  # secret silently ended up group-root.
+  users = config.users.users;
 
   settingsType = types.submodule {
     options = {
@@ -31,10 +33,18 @@ let
         readOnly = true;
         default =
           let
-            cache = lib.removePrefix "./" (self.kix.cache or "./secrets/cache");
-            path = "${self}/${cache}/${config.networking.hostName}";
+            path = "${cfg.cacheRoot}/${config.networking.hostName}";
           in
-          if builtins.pathExists path then
+          if cfg.cacheRoot == null then
+            throw ''
+              kix: `kix.cacheRoot` is unset, so the sealed secrets cannot be located.
+              Import the module through `config.flake.kix.nixosModule` (which sets it
+              from `flake.kix.cache`), or set `kix.cacheRoot` by hand.
+            ''
+          else if builtins.pathExists path then
+            # Import only this host's subdirectory rather than referring to
+            # "${self}/..." directly, so the derivation does not depend on the
+            # whole flake source.
             builtins.path { inherit path; }
           else
             warn ''
@@ -44,30 +54,23 @@ let
         description = "Secrets re-encrypted by host public key. In nix store.";
       };
 
+      # `str`, not `path`: these live on the target machine, never in the store,
+      # and a bare Nix path literal here would import the runtime directory.
       decryptedDir = mkOption {
-        type = types.path;
+        type = types.str;
         default = "/run/kix";
-        defaultText = literalExpression "/run/kix";
         description = "Folder where secrets are symlinked to.";
       };
 
       decryptedDirForUser = mkOption {
-        type = types.path;
+        type = types.str;
         default = "/run/kix-for-user";
-        defaultText = literalExpression "/run/kix-for-user";
         description = "Folder where secrets for early (pre-userborn) deployment are symlinked to.";
       };
 
       decryptedMountPoint = mkOption {
-        type =
-          types.addCheck types.str (
-            s: (builtins.match "[ \t\n]*" s) == null && (builtins.match ".+/" s) == null
-          )
-          // {
-            description = "${types.str.description} (with check: non-empty without trailing slash)";
-          };
+        type = types.str;
         default = "/run/kix.d";
-        defaultText = literalExpression "/run/kix.d";
         description = "Where secrets are created before being symlinked to {option}`kix.settings.decryptedDir`.";
       };
 
@@ -111,12 +114,19 @@ let
         default =
           let
             name = submod.config._module.args.name;
-            path = self.kix.secretsDir + "/${name}.age";
           in
-          lib.throwIfNot (builtins.pathExists path)
-            "kix: secret file not found: ${path}"
-            path;
-        defaultText = literalExpression ''self.kix.secretsDir + "/''${name}.age"'';
+          if cfg.secretsDir == null then
+            throw ''
+              kix: `kix.secretsDir` is unset, so the .age file for secret ${name} cannot be
+              located. Import the module through `config.flake.kix.nixosModule` (which sets
+              it from `flake.kix.secretsDir`), or set `kix.secrets.${name}.file` explicitly.
+            ''
+          else
+            let
+              path = cfg.secretsDir + "/${name}.age";
+            in
+            lib.throwIfNot (builtins.pathExists path) "kix: secret file not found: ${path}" path;
+        defaultText = literalExpression ''config.kix.secretsDir + "/''${name}.age"'';
         description = "Age file the secret is loaded from.";
       };
 
@@ -157,7 +167,30 @@ in
   options.kix = {
     package = mkOption {
       type = types.package;
-      defaultText = literalMD "`packages.kix` from this flake";
+      default = pkgs.callPackage ../package.nix { };
+      defaultText = literalMD "`kix` built from this flake's source with your own nixpkgs";
+      description = "The kix package used at build and activation time.";
+    };
+
+    cacheRoot = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = literalExpression ''"''${inputs.self}/secrets/cache"'';
+      description = ''
+        Directory holding the per-host sealed secrets, as a string pointing into
+        the flake source. Normally set for you by {option}`flake.kix.nixosModule`.
+      '';
+    };
+
+    secretsDir = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = literalExpression ''inputs.self + "/secrets"'';
+      description = ''
+        Directory containing the source .age files, used to derive the default of
+        {option}`kix.secrets.<name>.file`. Normally set for you by
+        {option}`flake.kix.nixosModule`.
+      '';
     };
 
     settings = mkOption {
@@ -177,38 +210,66 @@ in
       default = [ ];
       description = "IDs of secrets to deploy before user init.";
     };
-  };
 
-  options.kix-debug = mkOption {
-    type = types.unspecified;
-    default = cfg;
+    # The wire format between Nix and the kix binary. Written out explicitly
+    # rather than serialising `cfg` wholesale, so that adding an option above
+    # changes neither the on-disk format nor every host's profile hash.
+    profile = mkOption {
+      internal = true;
+      readOnly = true;
+      type = types.attrs;
+      default = {
+        settings = {
+          inherit (cfg.settings)
+            cacheInStore
+            decryptedDir
+            decryptedDirForUser
+            decryptedMountPoint
+            hostIdentifier
+            hostPubkey
+            ;
+          hostKeys = map (k: { inherit (k) path; }) cfg.settings.hostKeys;
+        };
+        secrets = lib.mapAttrs (_: s: {
+          inherit (s)
+            name
+            file
+            path
+            mode
+            owner
+            group
+            ;
+        }) cfg.secrets;
+        inherit (cfg) beforeUserborn;
+      };
+    };
+
+    profileFile = mkOption {
+      internal = true;
+      readOnly = true;
+      type = types.package;
+      default = pkgs.writeText "kix-profile-${cfg.settings.hostIdentifier}.json" (
+        builtins.toJSON cfg.profile
+      );
+    };
   };
 
   config =
     let
-      mkProfile =
-        partial:
-        pkgs.writeTextFile {
-          name = "secret-meta-${config.networking.hostName}";
-          text = builtins.toJSON partial;
-        };
-
-      profile = mkProfile cfg;
-
-      # Forces `kix check` to pass at build time — if any secrets are unsealed,
-      # nixos-rebuild fails here rather than silently deploying an incomplete set.
-      # The SEAL_CHECK env var is never read at runtime; it exists only so Nix
-      # treats this derivation as a build dependency of the systemd service.
-      checkSealedReport =
-        pkgs.runCommandLocal "kix-seal-check-${config.networking.hostName}" { }
-          "${lib.getExe cfg.package} -p ${profile} check > $out";
-
-      deployEnv = [ "SEAL_CHECK=${checkSealedReport}" ];
+      # Fails the build if any secret is unsealed, so `nixos-rebuild` stops here
+      # rather than producing a system whose kix-activate fails at boot. Built
+      # with pkgsBuildHost because it executes on the build machine.
+      checkSealed =
+        pkgs.pkgsBuildHost.runCommandLocal "kix-seal-check-${cfg.settings.hostIdentifier}" { }
+          "${
+            lib.getExe (pkgs.pkgsBuildHost.callPackage ../package.nix { })
+          } check --profile ${cfg.profileFile} > $out";
     in
     {
       assertions = [
         {
-          assertion = options.systemd ? sysusers && (config.systemd.sysusers.enable || config.services.userborn.enable);
+          assertion =
+            options.systemd ? sysusers && (config.systemd.sysusers.enable || config.services.userborn.enable);
           message = "kix requires `systemd.sysusers` or `services.userborn` to be enabled.";
         }
         {
@@ -217,14 +278,17 @@ in
         }
       ];
 
+      # `system.checks` gates the build without pulling the report into the
+      # system closure, which the old SEAL_CHECK environment variable did.
+      system.checks = [ checkSealed ];
+
       systemd.services.kix-activate = {
         wantedBy = [ "sysinit.target" ];
         after = [ "systemd-sysusers.service" ];
         unitConfig.DefaultDependencies = "no";
         serviceConfig = {
           Type = "oneshot";
-          Environment = deployEnv;
-          ExecStart = "${lib.getExe cfg.package} -p ${profile} deploy";
+          ExecStart = "${lib.getExe cfg.package} deploy --profile ${cfg.profileFile}";
           RemainAfterExit = true;
         };
       };
@@ -235,8 +299,7 @@ in
         unitConfig.DefaultDependencies = "no";
         serviceConfig = {
           Type = "oneshot";
-          Environment = deployEnv;
-          ExecStart = "${lib.getExe cfg.package} -p ${profile} deploy --early";
+          ExecStart = "${lib.getExe cfg.package} deploy --profile ${cfg.profileFile} --early";
           RemainAfterExit = true;
         };
       };

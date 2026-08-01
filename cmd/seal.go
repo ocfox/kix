@@ -10,46 +10,43 @@ import (
 	"filippo.io/age"
 	"github.com/spf13/cobra"
 
+	"github.com/ocfox/kix/manifest"
 	"github.com/ocfox/kix/profile"
 	"github.com/ocfox/kix/secure"
 )
 
-var (
-	sealIdentity string
-	sealCache    string
-)
+var sealManifest string
 
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Re-encrypt secrets for each host",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSeal(sealIdentity, sealCache)
+		return runSeal(sealManifest)
 	},
 }
 
 func init() {
-	sealCmd.Flags().StringVarP(&sealIdentity, "identity", "i", "", "identity for decrypt secrets")
-	sealCmd.Flags().StringVarP(&sealCache, "cache", "c", "", "cache directory for re-encrypted outputs")
-	sealCmd.MarkFlagRequired("identity")
-	sealCmd.MarkFlagRequired("cache")
+	sealCmd.Flags().StringVarP(&sealManifest, "manifest", "m", "", "manifest describing identity, cache and nodes")
+	sealCmd.MarkFlagRequired("manifest")
 }
 
-func runSeal(identityPath, cacheDir string) error {
+func runSeal(manifestPath string) error {
 	slog.Info("sealing...")
 
-	idents, err := parseIdentityFile(identityPath, terminalUI())
+	m, err := manifest.Load(manifestPath)
+	if err != nil {
+		return err
+	}
+
+	idents, err := parseIdentityFile(m.Identity, terminalUI())
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
 	masterID := idents[0]
 
-	allProfiles, err := profile.LoadProfiles(profiles)
+	allProfiles, err := profile.LoadAll(m.Profiles)
 	if err != nil {
 		return err
-	}
-
-	if _, err := os.Stat(filepath.Join(flakeRoot, "flake.nix")); err != nil {
-		return fmt.Errorf("flake.nix not found in %q: %w", flakeRoot, err)
 	}
 
 	// Read all original encrypted secret files
@@ -74,7 +71,7 @@ func runSeal(identityPath, cacheDir string) error {
 		}
 		for id := range p.Secrets {
 			hash := secure.HashSecret(ciphertexts[id], p.Settings.HostPubkey)
-			plan[hostID][id] = filepath.Join(cacheDir, hostID, hash)
+			plan[hostID][id] = filepath.Join(m.Cache, hostID, hash)
 		}
 	}
 
@@ -87,7 +84,7 @@ func runSeal(identityPath, cacheDir string) error {
 		}
 	}
 	for _, p := range allProfiles {
-		hostDir := filepath.Join(cacheDir, p.Settings.HostIdentifier)
+		hostDir := filepath.Join(m.Cache, p.Settings.HostIdentifier)
 		entries, err := os.ReadDir(hostDir)
 		if err != nil {
 			if !os.IsNotExist(err) {
