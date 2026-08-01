@@ -32,6 +32,7 @@ type Secret struct {
 	Name           string `json:"name"`
 	Owner          string `json:"owner"`
 	Path           string `json:"path"`
+	SourcePath     string `json:"sourcePath"`
 	BeforeUserborn bool   `json:"beforeUserborn"`
 }
 

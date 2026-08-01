@@ -173,6 +173,13 @@ in
         description = "Set from `flake.kix.secretsDir` by `flake.kix.nixosModule`.";
       };
 
+      secretsDirRelative = mkOption {
+        internal = true;
+        type = types.nullOr types.str;
+        default = null;
+        description = "The same directory as `secretsDir`, relative to the flake root.";
+      };
+
       cacheInStore = mkOption {
         internal = true;
         readOnly = true;
@@ -218,6 +225,18 @@ in
               group
               beforeUserborn
               ;
+            # Where `file` lives in the working tree, so seal can rewrite it
+            # when the recipient set changes. Null when `file` was pointed
+            # somewhere other than secretsDir, which seal must not touch.
+            sourcePath =
+              let
+                prefix = "${cfg.internal.secretsDir}/";
+                f = toString s.file;
+              in
+              if cfg.internal.secretsDirRelative != null && lib.hasPrefix prefix f then
+                "${cfg.internal.secretsDirRelative}/${lib.removePrefix prefix f}"
+              else
+                null;
           }) cfg.secrets;
         };
       };

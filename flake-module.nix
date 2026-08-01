@@ -13,6 +13,15 @@ let
 
   cfg = config.flake.kix;
 
+  relativePath = types.addCheck types.str (lib.hasPrefix "./") // {
+    description = "path string relative to the flake root, starting with ./";
+  };
+
+  # The same directory seen from the two sides: a store path for the NixOS
+  # module, which reads the sealed .age files, and a working-tree path for the
+  # commands that write them.
+  inStore = rel: "${self}/${lib.removePrefix "./" rel}";
+
   # Forces evaluation of every nixosConfiguration in `nodes`; narrow
   # `flake.kix.nodes` if that gets expensive.
   kixNodes = lib.filter (v: v.config ? kix) (lib.attrValues cfg.nodes);
@@ -66,11 +75,8 @@ in
               description = "Age identity used to decrypt the source .age files.";
             };
             cache = mkOption {
-              type = types.addCheck types.str (s: (builtins.substring 0 1 s) == ".") // {
-                description = "path string relative to flake root";
-              };
+              type = relativePath;
               default = "./secrets/cache";
-              defaultText = lib.literalExpression "./secrets/cache";
               description = ''
                 Where `seal` writes the per-host sealed secrets, relative to the
                 flake root. This directory must be committed: the NixOS module
@@ -78,10 +84,13 @@ in
               '';
             };
             secretsDir = mkOption {
-              type = types.path;
-              default = self + "/secrets";
-              defaultText = lib.literalExpression ''inputs.self + "/secrets"'';
-              description = "Directory containing .age secret files.";
+              type = relativePath;
+              default = "./secrets";
+              description = ''
+                Directory containing the source .age files, relative to the flake
+                root. Relative rather than a store path because `edit` and `seal`
+                write to it in your working tree.
+              '';
             };
             extraRecipients = mkOption {
               type = with types; listOf str;
@@ -105,8 +114,9 @@ in
                 { ... }:
                 {
                   imports = [ (kixSrc + "/module") ];
-                  kix.internal.cacheRoot = "${self}/${lib.removePrefix "./" cfg.cache}";
-                  kix.internal.secretsDir = cfg.secretsDir;
+                  kix.internal.cacheRoot = inStore cfg.cache;
+                  kix.internal.secretsDir = inStore cfg.secretsDir;
+                  kix.internal.secretsDirRelative = lib.removePrefix "./" cfg.secretsDir;
                 };
             };
           };
@@ -124,7 +134,7 @@ in
       manifest = pkgs.writeText "kix-manifest.json" (
         builtins.toJSON {
           inherit identity;
-          inherit (cfg) cache extraRecipients;
+          inherit (cfg) cache secretsDir extraRecipients;
           profiles = map (n: n.config.kix.internal.profileFile) kixNodes;
         }
       );

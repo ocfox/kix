@@ -16,22 +16,26 @@ import (
 	"github.com/ocfox/kix/secure"
 )
 
-var sealManifest string
+var (
+	sealManifest    string
+	sealOldIdentity string
+)
 
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Re-encrypt secrets for each host",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSeal(sealManifest)
+		return runSeal(sealManifest, sealOldIdentity)
 	},
 }
 
 func init() {
 	sealCmd.Flags().StringVarP(&sealManifest, "manifest", "m", "", "manifest describing identity, cache and nodes")
+	sealCmd.Flags().StringVar(&sealOldIdentity, "old-identity", "", "identity the source secrets are currently encrypted to, when rotating flake.kix.identity")
 	sealCmd.MarkFlagRequired("manifest")
 }
 
-func runSeal(manifestPath string) error {
+func runSeal(manifestPath, oldIdentityPath string) error {
 	slog.Info("sealing...")
 
 	m, err := manifest.Load(manifestPath)
@@ -60,6 +64,10 @@ func runSeal(manifestPath string) error {
 			}
 			ciphertexts[id] = data
 		}
+	}
+
+	if err := refreshRecipients(m, masterID, oldIdentityPath, allProfiles, ciphertexts); err != nil {
+		return err
 	}
 
 	// Build plan: hostID -> {secretID -> destPath}
