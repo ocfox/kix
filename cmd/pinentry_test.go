@@ -155,15 +155,3 @@ func TestAskPinentryDecodesTheSecret(t *testing.T) {
 		t.Errorf("askPinentry returned %q, want %q", got, "100%\nsure")
 	}
 }
-
-func TestAskPinentryReturnsThePassphrase(t *testing.T) {
-	prog := fakePinentry(t, `printf 'D hunter2\nOK\n'`)
-
-	got, err := askPinentry(prog, "unlocking id.txt", "Passphrase:")
-	if err != nil {
-		t.Fatalf("askPinentry: %v", err)
-	}
-	if string(got) != "hunter2" {
-		t.Errorf("askPinentry returned %q, want %q", got, "hunter2")
-	}
-}

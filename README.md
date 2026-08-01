@@ -39,6 +39,13 @@ committed for the flake to see it at all, and travels into `/nix/store` world
 readable along with the rest of your flake source. kix refuses to evaluate if
 it finds a bare age key there.
 
+The identity file may be protected by a passphrase — either an `age -p` file or
+an encrypted OpenSSH key. kix asks for it through `pinentry` if one is on
+`PATH`, and reads from the terminal otherwise. There is no setting for which
+pinentry to use: put the one you want earlier on `PATH`, the same way
+`pinentry-curses` and the usual wrapper scripts are already selected. A
+hardware token's PIN goes to the same prompt.
+
 A plugin identity is the exception and can live in the flake, since
 `AGE-PLUGIN-*` only names a slot on a hardware token and holds no key material:
 
