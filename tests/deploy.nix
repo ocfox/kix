@@ -89,8 +89,11 @@ in
     machine.succeed("test -f /run/kix/test")
     assert machine.succeed("cat /run/kix/test") == "${payload}"
 
-    # Each unit deploys only its own set: the early secret must not appear in
-    # the ordinary tree.
+    # The early unit ran before sysusers and deployed only its own secret; the
+    # ordinary one must not have been written into a tree that did not exist yet.
+    machine.succeed("systemctl is-active kix-activate-before-user.service")
+    assert machine.succeed("cat /run/kix-for-user/early") == "${earlyPayload}"
+    machine.succeed("test ! -e /run/kix-for-user/test")
     machine.succeed("test ! -e /run/kix/early")
 
     # group is the owner's primary group, i.e. the default, not set below.

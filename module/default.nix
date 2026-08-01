@@ -269,9 +269,19 @@ in
         };
       };
 
+      # Both names on purpose: only one of the two units exists on any given
+      # host, and referring to an absent unit is a no-op. Naming only
+      # systemd-sysusers.service meant nothing pulled this in under userborn,
+      # so `beforeUserborn` secrets were silently never deployed there.
       systemd.services.kix-activate-before-user = mkIf hasEarly {
-        wantedBy = [ "systemd-sysusers.service" ];
-        before = [ "systemd-sysusers.service" ];
+        wantedBy = [
+          "systemd-sysusers.service"
+          "userborn.service"
+        ];
+        before = [
+          "systemd-sysusers.service"
+          "userborn.service"
+        ];
         unitConfig.DefaultDependencies = "no";
         serviceConfig = {
           Type = "oneshot";
