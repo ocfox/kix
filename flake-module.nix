@@ -105,8 +105,8 @@ in
                 { ... }:
                 {
                   imports = [ (kixSrc + "/module") ];
-                  kix.cacheRoot = "${self}/${lib.removePrefix "./" cfg.cache}";
-                  kix.secretsDir = cfg.secretsDir;
+                  kix.internal.cacheRoot = "${self}/${lib.removePrefix "./" cfg.cache}";
+                  kix.internal.secretsDir = cfg.secretsDir;
                 };
             };
           };
@@ -125,7 +125,7 @@ in
         builtins.toJSON {
           inherit identity;
           inherit (cfg) cache extraRecipients;
-          profiles = map (n: n.config.kix.profileFile) kixNodes;
+          profiles = map (n: n.config.kix.internal.profileFile) kixNodes;
         }
       );
 

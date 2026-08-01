@@ -4,7 +4,9 @@
 let
   hostPubkey = builtins.readFile ./fixtures/ssh_host_ed25519_key.pub;
   secretFile = ./fixtures/test.age;
+  earlyFile = ./fixtures/early.age;
   payload = "s3cr3t-payload";
+  earlyPayload = "early-payload";
 in
 {
   name = "kix-deploy";
@@ -18,19 +20,12 @@ in
       # which is what this produces.
       sealProfile = pkgs.writeText "seal-profile.json" (
         builtins.toJSON {
-          settings = {
-            hostIdentifier = "machine";
-            inherit hostPubkey;
+          hostName = "machine";
+          inherit hostPubkey;
+          secrets = {
+            test.file = secretFile;
+            early.file = earlyFile;
           };
-          secrets.test = {
-            name = "test";
-            file = secretFile;
-            path = "/run/kix/test";
-            mode = "0400";
-            owner = "kixtest";
-            group = "kixtest";
-          };
-          beforeUserborn = [ ];
         }
       );
 
@@ -64,20 +59,26 @@ in
       };
 
       kix = {
-        cacheRoot = "${sealedCache}";
-        settings = {
-          inherit hostPubkey;
-          hostKeys = [
-            {
-              path = "/etc/ssh/ssh_host_ed25519_key";
-              type = "ed25519";
-            }
-          ];
-        };
-        secrets.test = {
-          file = secretFile;
-          owner = "kixtest";
-          mode = "0400";
+        internal.cacheRoot = "${sealedCache}";
+        inherit hostPubkey;
+        hostKeys = [
+          {
+            path = "/etc/ssh/ssh_host_ed25519_key";
+            type = "ed25519";
+          }
+        ];
+        secrets = {
+          test = {
+            file = secretFile;
+            owner = "kixtest";
+            mode = "0400";
+          };
+          # Mixed with an ordinary secret on purpose: each unit must deploy only
+          # its own set.
+          early = {
+            file = earlyFile;
+            beforeUserborn = true;
+          };
         };
       };
     };
@@ -87,6 +88,10 @@ in
 
     machine.succeed("test -f /run/kix/test")
     assert machine.succeed("cat /run/kix/test") == "${payload}"
+
+    # Each unit deploys only its own set: the early secret must not appear in
+    # the ordinary tree.
+    machine.succeed("test ! -e /run/kix/early")
 
     # group is the owner's primary group, i.e. the default, not set below.
     assert machine.succeed("stat -c %U:%G:%a /run/kix/test").strip() == "kixtest:kixtest:400"
