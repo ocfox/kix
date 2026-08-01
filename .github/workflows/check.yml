@@ -29,9 +29,12 @@ jobs:
 
       # magic-nix-cache backs onto the Actions cache, so nothing is rebuilt
       # between runs and there is no account or token. It documents only this
-      # installer.
+      # installer. FlakeHub is its paid tier, and left on it fails the
+      # authentication on every run.
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
+        with:
+          use-flakehub: false
 
       # Covers the package build (which runs go test), treefmt, and the VM test.
       - run: nix flake check --print-build-logs
