@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"filippo.io/age"
@@ -48,15 +49,35 @@ func terminalUI() *plugin.ClientUI {
 	)
 	// A token's PIN is a passphrase like any other, so route it to the same
 	// prompt. Non-secret values keep age's plain terminal read.
+	//
+	// Answers are remembered for the life of this UI, which is one run. A
+	// plugin spawns a fresh process on every unwrap, so a token whose PIN
+	// policy is "always" would otherwise prompt once per secret. The PIN
+	// stays in memory no longer than the plaintext it is unlocking.
 	readPublic := ui.RequestValue
+	var (
+		mu     sync.Mutex
+		answer = map[string]string{}
+	)
 	ui.RequestValue = func(name, message string, isSecret bool) (string, error) {
 		if !isSecret {
 			return readPublic(name, message, isSecret)
 		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		// Keyed by the question, so a plugin asking for two different
+		// things is not handed the same answer twice.
+		key := name + "\x00" + message
+		if cached, ok := answer[key]; ok {
+			return cached, nil
+		}
+
 		secret, err := askPassphrase(fmt.Sprintf("age-plugin-%s needs a value.", name), message)
 		if err != nil {
 			return "", err
 		}
+		answer[key] = string(secret)
 		return string(secret), nil
 	}
 	return ui

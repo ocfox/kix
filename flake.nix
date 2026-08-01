@@ -60,6 +60,7 @@
 
             checks.nixos = pkgs.testers.runNixOSTest ./tests/deploy.nix;
             checks.rotate = pkgs.callPackage ./tests/rotate.nix { kix = self'.packages.kix; };
+            checks.pin = pkgs.callPackage ./tests/pin.nix { kix = self'.packages.kix; };
           };
 
         flake = {
