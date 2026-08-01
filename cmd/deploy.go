@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"filippo.io/age"
 	"filippo.io/age/agessh"
@@ -107,7 +108,11 @@ func runDeploy(profilePath string, earlyMode bool) error {
 			}
 		}
 		if plainMap[id] == nil {
-			return fmt.Errorf("no host key can decrypt secret %s", id)
+			return fmt.Errorf(
+				"no host key can decrypt secret %s: it was sealed to %q, "+
+					"but none of this host's keys (%s) matches. "+
+					"kix.hostPubkey is not the public half of a key in kix.hostKeys",
+				id, strings.TrimSpace(p.HostPubkey), strings.Join(hostKeyPaths(p), ", "))
 		}
 	}
 
@@ -186,6 +191,17 @@ func replaceSymlink(target, name string) error {
 		return err
 	}
 	return nil
+}
+
+func hostKeyPaths(p *profile.Profile) []string {
+	paths := make([]string, 0, len(p.HostKeys))
+	for _, hk := range p.HostKeys {
+		paths = append(paths, hk.Path)
+	}
+	if len(paths) == 0 {
+		return []string{"none configured"}
+	}
+	return paths
 }
 
 func hostKeyIdentities(p *profile.Profile) []age.Identity {
