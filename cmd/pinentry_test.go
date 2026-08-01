@@ -171,6 +171,82 @@ func TestTerminalUIAsksForPluginSecretsThroughPinentry(t *testing.T) {
 	}
 }
 
+// A token with a PIN policy of "always" is asked on every unwrap, and seal
+// unwraps once per secret. The user must still be asked only once.
+func TestTerminalUIAsksForAPluginSecretOnlyOnce(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "pinentry")
+	log := filepath.Join(dir, "prompts")
+	script := `#!/bin/sh
+echo asked >> ` + log + `
+printf 'OK\n'
+while IFS= read -r line; do
+  case "$line" in
+    GETPIN*) printf 'D 123456\nOK\n' ;;
+    BYE*) printf 'OK\n'; exit 0 ;;
+    *) printf 'OK\n' ;;
+  esac
+done
+`
+	if err := os.WriteFile(prog, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing fake pinentry: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	ui := terminalUI()
+	for i := range 3 {
+		got, err := ui.RequestValue("kixtest", "Enter PIN:", true)
+		if err != nil {
+			t.Fatalf("RequestValue %d: %v", i, err)
+		}
+		if got != "123456" {
+			t.Fatalf("RequestValue %d returned %q", i, got)
+		}
+	}
+
+	prompts, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("reading prompts: %v", err)
+	}
+	if n := strings.Count(string(prompts), "asked"); n != 1 {
+		t.Errorf("asked for the PIN %d times, want 1", n)
+	}
+}
+
+// Two different questions are two different answers.
+func TestTerminalUIDoesNotReuseAnAnswerForAnotherPrompt(t *testing.T) {
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "pinentry")
+	script := `#!/bin/sh
+printf 'OK\n'
+while IFS= read -r line; do
+  case "$line" in
+    SETPROMPT*) last="${line#SETPROMPT }"; printf 'OK\n' ;;
+    GETPIN*) printf 'D answer-for-%s\nOK\n' "$last" ;;
+    BYE*) printf 'OK\n'; exit 0 ;;
+    *) printf 'OK\n' ;;
+  esac
+done
+`
+	if err := os.WriteFile(prog, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing fake pinentry: %v", err)
+	}
+	t.Setenv("PATH", dir)
+
+	ui := terminalUI()
+	first, err := ui.RequestValue("kixtest", "PIN:", true)
+	if err != nil {
+		t.Fatalf("RequestValue: %v", err)
+	}
+	second, err := ui.RequestValue("kixtest", "PUK:", true)
+	if err != nil {
+		t.Fatalf("RequestValue: %v", err)
+	}
+	if first == second {
+		t.Errorf("both prompts returned %q", first)
+	}
+}
+
 func TestAskPinentryReportsACancelledPrompt(t *testing.T) {
 	prog := fakePinentry(t, `printf 'ERR 83886179 Operation cancelled\n'`)
 

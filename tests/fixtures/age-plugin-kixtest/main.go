@@ -38,12 +38,25 @@ func main() {
 		return
 	}
 
-	p.HandleIdentity(func(data []byte) (age.Identity, error) { return newKey(data) })
+	p.HandleIdentity(func(data []byte) (age.Identity, error) {
+		k, err := newKey(data)
+		if err != nil {
+			return nil, err
+		}
+		// A token with a PIN policy of "always": every unwrap asks again,
+		// which is what makes the client's prompt count observable.
+		k.pin, k.plugin = os.Getenv("KIXTEST_PIN"), p
+		return k, nil
+	})
 	p.HandleIdentityAsRecipient(func(data []byte) (age.Recipient, error) { return newKey(data) })
 	os.Exit(p.Main())
 }
 
-type key struct{ aead cipher.AEAD }
+type key struct {
+	aead   cipher.AEAD
+	pin    string
+	plugin *plugin.Plugin
+}
 
 func newKey(data []byte) (*key, error) {
 	k := make([]byte, chacha20poly1305.KeySize)
@@ -68,6 +81,15 @@ func (k *key) Wrap(fileKey []byte) ([]*age.Stanza, error) {
 }
 
 func (k *key) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
+	if k.pin != "" {
+		got, err := k.plugin.RequestValue("Enter PIN:", true)
+		if err != nil {
+			return nil, err
+		}
+		if got != k.pin {
+			return nil, fmt.Errorf("wrong PIN")
+		}
+	}
 	for _, s := range stanzas {
 		if s.Type != stanzaType || len(s.Args) != 1 {
 			continue
