@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -173,9 +174,17 @@ func (c *assuan) command(line string) error {
 	return nil
 }
 
+// assuanError turns "ERR <code> <description>" into just the description; the
+// numeric code means nothing to the person reading the message.
 func assuanError(line string) error {
-	if desc := strings.TrimSpace(strings.TrimPrefix(line, "ERR ")); desc != "" {
-		return errors.New("pinentry: " + desc)
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "ERR "))
+	if code, desc, ok := strings.Cut(rest, " "); ok {
+		if _, err := strconv.Atoi(code); err == nil {
+			rest = desc
+		}
+	}
+	if rest = strings.TrimSpace(rest); rest != "" {
+		return errors.New("pinentry: " + rest)
 	}
 	return errors.New("pinentry failed")
 }

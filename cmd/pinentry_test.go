@@ -113,6 +113,49 @@ func TestAskPinentryTellsPinentryWhichTerminalToUse(t *testing.T) {
 	}
 }
 
+// A hardware token's PIN should reach the same prompt as everything else.
+func TestTerminalUIAsksForPluginSecretsThroughPinentry(t *testing.T) {
+	prog := fakePinentry(t, `printf 'D 123456\nOK\n'`)
+	t.Setenv("PATH", filepath.Dir(prog))
+
+	got, err := terminalUI().RequestValue("kixtest", "Enter PIN:", true)
+	if err != nil {
+		t.Fatalf("RequestValue: %v", err)
+	}
+	if got != "123456" {
+		t.Errorf("RequestValue returned %q, want %q", got, "123456")
+	}
+}
+
+func TestAskPinentryReportsACancelledPrompt(t *testing.T) {
+	prog := fakePinentry(t, `printf 'ERR 83886179 Operation cancelled\n'`)
+
+	_, err := askPinentry(prog, "unlocking id.txt", "Passphrase:")
+	if err == nil {
+		t.Fatal("askPinentry ignored a cancelled prompt")
+	}
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("error %q does not say the prompt was cancelled", err)
+	}
+	// The Assuan error code means nothing to the person reading it.
+	if strings.Contains(err.Error(), "83886179") {
+		t.Errorf("error %q shows the raw Assuan code", err)
+	}
+}
+
+// pinentry percent-escapes the secret it hands back.
+func TestAskPinentryDecodesTheSecret(t *testing.T) {
+	prog := fakePinentry(t, `printf 'D 100%%25%%0Asure\nOK\n'`)
+
+	got, err := askPinentry(prog, "unlocking id.txt", "Passphrase:")
+	if err != nil {
+		t.Fatalf("askPinentry: %v", err)
+	}
+	if string(got) != "100%\nsure" {
+		t.Errorf("askPinentry returned %q, want %q", got, "100%\nsure")
+	}
+}
+
 func TestAskPinentryReturnsThePassphrase(t *testing.T) {
 	prog := fakePinentry(t, `printf 'D hunter2\nOK\n'`)
 

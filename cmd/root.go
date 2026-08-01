@@ -42,10 +42,24 @@ func init() {
 }
 
 func terminalUI() *plugin.ClientUI {
-	return plugin.NewTerminalUI(
+	ui := plugin.NewTerminalUI(
 		func(format string, v ...any) { fmt.Printf(format, v...) },
 		func(format string, v ...any) { fmt.Fprintf(os.Stderr, format, v...) },
 	)
+	// A token's PIN is a passphrase like any other, so route it to the same
+	// prompt. Non-secret values keep age's plain terminal read.
+	readPublic := ui.RequestValue
+	ui.RequestValue = func(name, message string, isSecret bool) (string, error) {
+		if !isSecret {
+			return readPublic(name, message, isSecret)
+		}
+		secret, err := askPassphrase(fmt.Sprintf("age-plugin-%s needs a value.", name), message)
+		if err != nil {
+			return "", err
+		}
+		return string(secret), nil
+	}
+	return ui
 }
 
 func parseRecipient(s string, ui *plugin.ClientUI) (age.Recipient, error) {
