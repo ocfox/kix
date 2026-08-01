@@ -24,7 +24,8 @@ var rootCmd = &cobra.Command{
 
 // Execute runs the root command. Errors are already reported by cobra, so it
 // only sets the exit status.
-func Execute() {
+func Execute(version string) {
+	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

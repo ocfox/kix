@@ -3,9 +3,12 @@
   buildGoModule,
 }:
 
+let
+  version = "0.1.1";
+in
 buildGoModule {
   pname = "kix";
-  version = "0.1.0";
+  inherit version;
 
   src = lib.fileset.toSource {
     root = ./.;
@@ -25,6 +28,7 @@ buildGoModule {
   ldflags = [
     "-s"
     "-w"
+    "-X main.version=${version}"
   ];
 
   meta = {

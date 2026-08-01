@@ -81,8 +81,8 @@ and nothing to remember.
 
 The stamp is needed because an age file does not say who it is encrypted to —
 the header holds one opaque stanza per recipient, so the set has to be
-remembered rather than derived. It contains public keys only, and is committed
-with the cache it describes.
+remembered rather than derived. It contains public keys and fingerprints only,
+and is committed with the cache it describes.
 
 ### Rotating the identity
 
