@@ -17,9 +17,34 @@ let
   # `flake.kix.nodes` if that gets expensive.
   kixNodes = lib.filter (v: v.config ? kix) (lib.attrValues cfg.nodes);
 
+  # A path written as `inputs.self + "/secrets/x"` or `./secrets/x` has to be
+  # committed for the flake to see it, and travels into /nix/store world
+  # readable with the rest of the flake source. That is harmless for a plugin
+  # identity, which only names a slot on a hardware token, and catastrophic for
+  # a bare age key, which is the one thing that decrypts every secret.
+  identityIsPlaintextKeyInStore =
+    p:
+    lib.hasPrefix builtins.storeDir p
+    && builtins.pathExists p
+    && lib.any (lib.hasPrefix "AGE-SECRET-KEY-") (lib.splitString "\n" (builtins.readFile p));
+
   identity =
     if cfg.identity == null then
       throw "kix: `flake.kix.identity` is unset; set it to the age identity used to decrypt your secrets."
+    else if identityIsPlaintextKeyInStore "${cfg.identity}" then
+      throw ''
+        kix: `flake.kix.identity` points at a bare age secret key inside the flake source.
+        It is therefore committed to your repository and world readable in /nix/store,
+        and it decrypts every secret kix manages.
+
+        Point the option at an absolute path outside the flake instead, as a string so
+        Nix does not copy it into the store:
+
+            flake.kix.identity = "/home/you/.config/age/kix-identity.txt";
+
+        A plugin identity (AGE-PLUGIN-*) is safe to keep in the flake: it names a slot
+        on a hardware token rather than holding key material.
+      ''
     else
       "${cfg.identity}";
 in
