@@ -1,4 +1,5 @@
-# Rotating flake.kix.identity between two plugin identities. Needs no VM: the
+# Changing who the source secrets are encrypted to: rotating flake.kix.identity
+# between two plugin identities, and adding an extraRecipient. Needs no VM: the
 # whole path under test is seal's, and a fake plugin stands in for the token.
 {
   lib,
@@ -25,6 +26,8 @@ let
   };
 
   hostPubkey = lib.removeSuffix "\n" (builtins.readFile ./fixtures/ssh_host_ed25519_key.pub);
+  extraRecipient = lib.removeSuffix "\n" (builtins.readFile ./fixtures/id.pub);
+  extraIdentity = ./fixtures/id.txt;
   payload = "rotate-me";
 in
 runCommand "kix-rotate-plugin-identity"
@@ -62,7 +65,7 @@ runCommand "kix-rotate-plugin-identity"
     {
       "identity": "$1",
       "cache": "$PWD/cache",
-      "extraRecipients": [],
+      "extraRecipients": [''${2-}],
       "profiles": ["$PWD/profile.json"]
     }
     EOF
@@ -109,6 +112,23 @@ runCommand "kix-rotate-plugin-identity"
     printf 'identity <identity-based recipient>\n' > cache/.recipients
     kix seal --manifest manifest.json
     grep -q '^identity plugin:kixtest:' cache/.recipients
+
+    echo "--- the extra recipient cannot read the source yet"
+    if DUMP_TO=$PWD/nope EDITOR=$PWD/dump kix edit -i ${extraIdentity} secrets/test.age 2> /dev/null; then
+      echo "FAIL: a recipient that was never added could read the source" >&2
+      exit 1
+    fi
+
+    echo "--- adding an extraRecipient re-encrypts, with no old identity needed"
+    manifest idB.txt '"${extraRecipient}"'
+    kix seal --manifest manifest.json
+    grep -q '^recipient ${extraRecipient}$' cache/.recipients
+
+    DUMP_TO=$PWD/extra EDITOR=$PWD/dump kix edit -i ${extraIdentity} secrets/test.age
+    [ "$(cat extra)" = "${payload}" ]
+
+    DUMP_TO=$PWD/still EDITOR=$PWD/dump kix edit -i idB.txt secrets/test.age
+    [ "$(cat still)" = "${payload}" ]
 
     touch $out
   ''
