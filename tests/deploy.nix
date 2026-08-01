@@ -94,6 +94,15 @@ in
     machine.succeed("test -L /run/kix")
     machine.succeed("stat -f -c %T /run/kix.d | grep -q ramfs")
 
+    # A mount point that exists but has nothing mounted on it must be remounted,
+    # not silently used as a plain tmpfs directory under /run.
+    machine.succeed("umount /run/kix.d")
+    machine.succeed("test -d /run/kix.d")
+    assert "ramfs" not in machine.succeed("stat -f -c %T /run/kix.d")
+    machine.succeed("systemctl restart kix-activate.service")
+    machine.succeed("stat -f -c %T /run/kix.d | grep -q ramfs")
+    assert machine.succeed("cat /run/kix/test") == "${payload}"
+
     # Restarting the unit repeatedly must keep /run/kix pointing at a usable
     # generation. The ENOENT watcher is opportunistic: it cannot report a false
     # positive, but the window it looks for is far too narrow for a shell loop

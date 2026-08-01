@@ -176,6 +176,35 @@ func hostKeyIdentities(p *profile.Profile) []age.Identity {
 	return idents
 }
 
+// ramfsMagic is RAMFS_MAGIC from linux/magic.h.
+const ramfsMagic = 0x858458f6
+
+// ensureRamfs makes mountPoint exist and be a ramfs mount.
+//
+// Testing whether the directory exists is not the same question: if it exists
+// but nothing is mounted on it -- a failed mount that left the mkdir behind,
+// or someone creating it by hand -- secrets land on the plain /run tmpfs
+// instead. That matters because tmpfs pages can be swapped out and ramfs pages
+// cannot, which is the whole reason for mounting anything here.
+func ensureRamfs(mountPoint string) error {
+	if err := os.MkdirAll(mountPoint, 0o751); err != nil {
+		return fmt.Errorf("creating mount point %s: %w", mountPoint, err)
+	}
+
+	var st unix.Statfs_t
+	if err := unix.Statfs(mountPoint, &st); err != nil {
+		return fmt.Errorf("statfs %s: %w", mountPoint, err)
+	}
+	if st.Type == ramfsMagic {
+		return nil
+	}
+
+	if err := unix.Mount("ramfs", mountPoint, "ramfs", unix.MS_NOSUID, "mode=751"); err != nil {
+		return fmt.Errorf("mounting ramfs at %s: %w", mountPoint, err)
+	}
+	return nil
+}
+
 func nextGenDir(mountPoint string, early bool) (string, error) {
 	target := "normal"
 	if early {
@@ -183,21 +212,8 @@ func nextGenDir(mountPoint string, early bool) (string, error) {
 	}
 	genBase := filepath.Join(mountPoint, target)
 
-	if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
-		if err := os.MkdirAll(mountPoint, 0o751); err != nil {
-			return "", fmt.Errorf("creating mount point %s: %w", mountPoint, err)
-		}
-		if err := unix.Mount("ramfs", mountPoint, "ramfs", unix.MS_NOSUID, "mode=751"); err != nil {
-			return "", fmt.Errorf("mounting ramfs at %s: %w", mountPoint, err)
-		}
-		if err := os.MkdirAll(genBase, 0o751); err != nil {
-			return "", fmt.Errorf("creating %s: %w", genBase, err)
-		}
-		genDir := filepath.Join(genBase, "0")
-		if err := os.MkdirAll(genDir, 0o751); err != nil {
-			return "", fmt.Errorf("creating generation dir: %w", err)
-		}
-		return genDir, nil
+	if err := ensureRamfs(mountPoint); err != nil {
+		return "", err
 	}
 
 	if err := os.MkdirAll(genBase, 0o751); err != nil {
