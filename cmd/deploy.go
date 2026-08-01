@@ -117,14 +117,32 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		}
 	}
 
-	// Deploy to filesystem
+	if err := activateGeneration(genDir, symlinkDst, secrets, plainMap); err != nil {
+		return err
+	}
+
+	slog.Info("deploy complete")
+	return nil
+}
+
+// activateGeneration writes every secret into genDir and then points
+// symlinkDst at it.
+//
+// Until the symlink is swapped nothing can reach genDir, so a generation that
+// does not make it that far is discarded rather than left behind: it holds a
+// full set of plaintext, and on ramfs that is pinned in RAM until the next
+// successful deploy or a reboot.
+func activateGeneration(genDir, symlinkDst string, secrets map[string]profile.Secret, plainMap map[string][]byte) error {
+	discard := func() {
+		if err := os.RemoveAll(genDir); err != nil {
+			slog.Warn("removing the abandoned generation", "path", genDir, "error", err)
+		}
+	}
+
 	var deployErrs []error
 	for id, s := range secrets {
-		plaintext := plainMap[id]
-
 		dst := filepath.Join(genDir, s.Name)
-
-		if err := secure.DeployToFS(plaintext, &s, dst); err != nil {
+		if err := secure.DeployToFS(plainMap[id], &s, dst); err != nil {
 			slog.Error("deploy failed", "secret", id, "error", err)
 			deployErrs = append(deployErrs, err)
 			continue
@@ -132,16 +150,16 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		slog.Info("deployed", "secret", id, "path", dst)
 	}
 	if len(deployErrs) > 0 {
+		discard()
 		return fmt.Errorf("deploy completed with %d error(s)", len(deployErrs))
 	}
 
 	if err := replaceSymlink(genDir, symlinkDst); err != nil {
+		discard()
 		return fmt.Errorf("pointing %q at %q: %w", symlinkDst, genDir, err)
 	}
 
 	pruneGenerations(filepath.Dir(genDir), genDir)
-
-	slog.Info("deploy complete")
 	return nil
 }
 
