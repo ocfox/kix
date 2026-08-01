@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
+	"filippo.io/age/plugin"
 
 	"github.com/ocfox/kix/manifest"
 	"github.com/ocfox/kix/profile"
@@ -23,8 +24,43 @@ import (
 // opaque stanza per recipient, and nothing in it identifies the recipient. You
 // can count stanzas, which catches adding one but not swapping one, so the
 // recipient set has to be remembered rather than derived. It holds public keys
-// only, and belongs in the repository beside the cache it describes.
+// and fingerprints only, and belongs in the repository beside the cache it
+// describes.
 const stampName = ".recipients"
+
+const (
+	// pluginStampPrefix marks a stamped identity as a fingerprint rather than
+	// a recipient, so the two can never be compared as equal by accident.
+	pluginStampPrefix = "plugin:"
+
+	// legacyPluginIdentity is what kix wrote for every plugin identity before
+	// identityStamp existed. See the migration in refreshRecipients.
+	legacyPluginIdentity = "<identity-based recipient>"
+)
+
+// identityStamp names an identity in the stamp, stably and without writing key
+// material into the repository.
+//
+// It deliberately does not go through the recipient. plugin.Identity.Recipient
+// returns a recipient whose String is the constant "<identity-based
+// recipient>", because a plugin recipient derived from an identity has no
+// recipient encoding to report. Stamping that meant every hardware token
+// looked alike, so rotating from one to another compared equal and the source
+// secrets were silently left encrypted to the old token.
+//
+// The identity encoding distinguishes them, but AGE-PLUGIN-... belongs to the
+// user, not to a file the repository commits, so stamp a hash of it instead.
+// Equality is all the stamp is ever asked for.
+func identityStamp(id age.Identity) string {
+	switch id := id.(type) {
+	case *age.X25519Identity:
+		return id.Recipient().String()
+	case *plugin.Identity:
+		return pluginStampPrefix + id.Name() + ":" + blake2bHex([]byte(id.String()))[:16]
+	default:
+		return ""
+	}
+}
 
 // stamp keeps the identity's own recipient apart from the extra ones, because
 // the two kinds of change need different handling: extras can be applied with
@@ -94,7 +130,25 @@ func refreshRecipients(
 	}
 
 	have := parseStamp(data)
+
+	// A stamp written before identityStamp records every plugin identity as
+	// the same placeholder, so it cannot say whether the token changed. Assume
+	// it did not and upgrade the stamp in place: the alternative is demanding
+	// --old-identity from everyone who upgrades kix, having just told them
+	// their secrets may be unreadable, on no evidence at all. A rotation
+	// performed before the upgrade is missed, and one performed after is
+	// caught.
+	upgraded := false
+	if have.identity == legacyPluginIdentity && strings.HasPrefix(want.identity, pluginStampPrefix) {
+		have.identity = want.identity
+		upgraded = true
+	}
+
 	if have.equal(want) {
+		if upgraded {
+			slog.Info("upgrading recipient stamp to fingerprint the plugin identity", "path", stampPath)
+			return writeStamp(stampPath, want)
+		}
 		return nil
 	}
 
@@ -175,7 +229,7 @@ func recipientSet(m *manifest.Manifest, masterID age.Identity) (stamp, []age.Rec
 	)
 	if r := identityRecipient(masterID); r != nil {
 		recips = append(recips, r)
-		s.identity = fmt.Sprint(r)
+		s.identity = identityStamp(masterID)
 	}
 	for _, name := range m.ExtraRecipients {
 		r, err := parseRecipient(name, terminalUI())
