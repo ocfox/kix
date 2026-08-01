@@ -82,8 +82,10 @@ let
         '';
       };
 
+      # Caught here rather than at activation, and capped at 0777 because
+      # setuid, setgid and sticky cannot survive the trip to the file.
       mode = mkOption {
-        type = types.str;
+        type = types.strMatching "0?[0-7]{3}";
         default = "0400";
         description = "Permissions mode of the decrypted secret.";
       };
