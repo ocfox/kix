@@ -37,7 +37,7 @@ func runCheck(profilePath string) error {
 	for id, s := range p.Secrets {
 		original, err := os.ReadFile(s.File)
 		if err != nil {
-			return fmt.Errorf("reading secret file %s: %w", id, err)
+			return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
 		}
 		path := filepath.Join(p.CacheInStore, secure.HashSecret(original, p.HostPubkey))
 		if _, err := os.Stat(path); os.IsNotExist(err) {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -53,7 +54,7 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 		}
 	}
 	if identityPath == "" {
-		return fmt.Errorf("no identity: pass --identity or --manifest")
+		return errors.New("no identity: pass --identity or --manifest")
 	}
 
 	idents, err := parseIdentityFile(identityPath, ui)

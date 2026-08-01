@@ -162,15 +162,15 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 				}
 				encrypted, err := secure.EncryptAge(plaintexts[id], recip)
 				if err != nil {
-					fail(fmt.Errorf("encrypt %s for %s: %w", id, hostID, err))
+					fail(fmt.Errorf("encrypting %q for host %q: %w", id, hostID, err))
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-					fail(fmt.Errorf("mkdir for %s: %w", id, err))
+					fail(fmt.Errorf("creating cache dir for %q: %w", id, err))
 					continue
 				}
 				if err := os.WriteFile(dstPath, encrypted, 0o644); err != nil {
-					fail(fmt.Errorf("write %s: %w", dstPath, err))
+					fail(fmt.Errorf("writing %q: %w", dstPath, err))
 					continue
 				}
 				slog.Info("sealed", "secret", id, "host", hostID)
@@ -209,7 +209,7 @@ func decryptOnce(
 			}
 			plaintext, err := secure.DecryptAge(ciphertexts[secretID], id)
 			if err != nil {
-				return nil, fmt.Errorf("decrypt %s: %w", secretID, err)
+				return nil, fmt.Errorf("decrypting %q: %w", secretID, err)
 			}
 			plaintexts[secretID] = plaintext
 		}

@@ -27,7 +27,7 @@ func HashSecret(content []byte, hostRecipient string) string {
 func DecryptAge(encrypted []byte, idents ...age.Identity) ([]byte, error) {
 	r, err := age.Decrypt(bytes.NewReader(encrypted), idents...)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
+		return nil, fmt.Errorf("decrypting: %w", err)
 	}
 	return io.ReadAll(r)
 }
@@ -36,13 +36,13 @@ func EncryptAge(plaintext []byte, recips ...age.Recipient) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	w, err := age.Encrypt(buf, recips...)
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+		return nil, fmt.Errorf("encrypting: %w", err)
 	}
 	if _, err := w.Write(plaintext); err != nil {
-		return nil, fmt.Errorf("write: %w", err)
+		return nil, fmt.Errorf("writing ciphertext: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, fmt.Errorf("close: %w", err)
+		return nil, fmt.Errorf("closing ciphertext: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -51,7 +51,7 @@ func ParsePermissions(s string) (uint32, error) {
 	s = strings.TrimPrefix(s, "0")
 	mode, err := strconv.ParseUint(s, 8, 32)
 	if err != nil {
-		return 0, fmt.Errorf("parse permissions %q: %w", s, err)
+		return 0, fmt.Errorf("parsing permissions %q: %w", s, err)
 	}
 	return uint32(mode), nil
 }
@@ -59,7 +59,7 @@ func ParsePermissions(s string) (uint32, error) {
 func DeployToFS(data []byte, secret *profile.Secret, dst string) error {
 	perm, err := ParsePermissions(secret.Mode)
 	if err != nil {
-		return fmt.Errorf("parse mode %q: %w", secret.Mode, err)
+		return err
 	}
 
 	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(perm))
