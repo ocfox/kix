@@ -21,6 +21,7 @@ type Manifest struct {
 	Profiles []string `json:"profiles"`
 }
 
+// Load reads the manifest JSON file as written by the flake-parts module.
 func Load(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

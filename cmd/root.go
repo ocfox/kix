@@ -1,3 +1,5 @@
+// Package cmd implements the kix command line: seal, edit, deploy and check,
+// along with the recipient and identity parsing they share.
 package cmd
 
 import (
@@ -20,6 +22,8 @@ var rootCmd = &cobra.Command{
 	Short: "Secret manager for NixOS",
 }
 
+// Execute runs the root command. Errors are already reported by cobra, so it
+// only sets the exit status.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

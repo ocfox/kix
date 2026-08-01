@@ -36,6 +36,7 @@ type Secret struct {
 	BeforeUserborn bool   `json:"beforeUserborn"`
 }
 
+// Load reads one profile JSON file as written by the NixOS module.
 func Load(path string) (*Profile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -48,6 +49,8 @@ func Load(path string) (*Profile, error) {
 	return &p, nil
 }
 
+// LoadAll reads every profile listed in a manifest, failing on the first bad
+// one so seal never plans against a partial view of the hosts.
 func LoadAll(paths []string) ([]*Profile, error) {
 	profiles := make([]*Profile, 0, len(paths))
 	for _, path := range paths {
