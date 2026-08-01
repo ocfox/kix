@@ -11,8 +11,22 @@ In your flake:
 ```nix
 {
   imports = [ inputs.kix.flakeModules.default ];
-  flake.kix.identity = inputs.self + "/secrets/identity.txt";
+  flake.kix.identity = "/home/you/.config/age/kix-identity.txt";
 }
+```
+
+`identity` is the key that decrypts every secret kix manages. Give it an
+absolute path **as a string**, so it stays outside the flake. A path written as
+`./secrets/identity.txt` or `inputs.self + "/secrets/identity.txt"` has to be
+committed for the flake to see it at all, and travels into `/nix/store` world
+readable along with the rest of your flake source. kix refuses to evaluate if
+it finds a bare age key there.
+
+A plugin identity is the exception and can live in the flake, since
+`AGE-PLUGIN-*` only names a slot on a hardware token and holds no key material:
+
+```nix
+flake.kix.identity = inputs.self + "/secrets/age-yubikey-identity-abcd1234.txt";
 ```
 
 In each host, import the pre-wired module rather than `nixosModules.default`,
