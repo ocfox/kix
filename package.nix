@@ -34,7 +34,7 @@ buildGoModule {
   meta = {
     description = "Secret manager for NixOS";
     homepage = "https://github.com/ocfox/kix";
-    license = lib.licenses.asl20;
+    license = lib.licenses.mit;
     mainProgram = "kix";
   };
 }
