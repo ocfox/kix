@@ -107,22 +107,25 @@ in
         }
       );
 
-      # `flake.kix.cache` is relative to the flake root, so anchor the working
-      # directory there rather than relying on where the user happened to run
-      # `nix run` from.
-      wrapper =
-        name: subcommand:
-        pkgs.writeShellApplication {
-          inherit name;
-          runtimeInputs = [ pkgs.git ];
-          text = ''
-            cd "$(git rev-parse --show-toplevel)"
-            exec ${lib.getExe kix} ${subcommand} --manifest ${manifest} "$@"
-          '';
-        };
+      # `flake.kix.cache` is relative to the flake root, so seal has to run from
+      # there rather than wherever the user happened to invoke `nix run`.
+      seal = pkgs.writeShellApplication {
+        name = "kix-seal";
+        runtimeInputs = [ pkgs.git ];
+        text = ''
+          cd "$(git rev-parse --show-toplevel)"
+          exec ${lib.getExe kix} seal --manifest ${manifest} "$@"
+        '';
+      };
 
-      seal = wrapper "kix-seal" "seal";
-      edit = wrapper "kix-edit" "edit";
+      # edit takes an explicit file argument and never touches the cache, so it
+      # deliberately does not cd: a relative path stays relative to the caller.
+      edit = pkgs.writeShellApplication {
+        name = "kix-edit";
+        text = ''
+          exec ${lib.getExe kix} edit --manifest ${manifest} "$@"
+        '';
+      };
     in
     {
       packages = {

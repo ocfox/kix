@@ -257,13 +257,12 @@ in
   config =
     let
       # Fails the build if any secret is unsealed, so `nixos-rebuild` stops here
-      # rather than producing a system whose kix-activate fails at boot. Built
-      # with pkgsBuildHost because it executes on the build machine.
+      # rather than producing a system whose kix-activate fails at boot. Runs
+      # cfg.package on the build machine, so as before it does not work when the
+      # host and build platforms differ.
       checkSealed =
-        pkgs.pkgsBuildHost.runCommandLocal "kix-seal-check-${cfg.settings.hostIdentifier}" { }
-          "${
-            lib.getExe (pkgs.pkgsBuildHost.callPackage ../package.nix { })
-          } check --profile ${cfg.profileFile} > $out";
+        pkgs.runCommandLocal "kix-seal-check-${cfg.settings.hostIdentifier}" { }
+          "${lib.getExe cfg.package} check --profile ${cfg.profileFile} > $out";
     in
     {
       assertions = [
