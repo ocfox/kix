@@ -119,5 +119,13 @@ in
     """)
 
     assert machine.succeed("cat /run/kix/test") == "${payload}"
+
+    # Old generations hold a full copy of every plaintext on ramfs, so exactly
+    # one must survive an activation no matter how many have been created.
+    generations = machine.succeed("ls /run/kix.d/normal | wc -l").strip()
+    assert generations == "1", f"{generations} generation directories left, want 1"
+    assert machine.succeed("readlink /run/kix") == machine.succeed(
+        "ls -d /run/kix.d/normal/*"
+    )
   '';
 }

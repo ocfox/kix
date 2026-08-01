@@ -131,8 +131,36 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		return fmt.Errorf("pointing %s at %s: %w", symlinkDst, genDir, err)
 	}
 
+	pruneGenerations(filepath.Dir(genDir), genDir)
+
 	slog.Info("deploy complete")
 	return nil
+}
+
+// pruneGenerations removes every generation directory except keep.
+//
+// Each activation creates a new one holding a full set of plaintext secrets,
+// and they live on ramfs, which is neither swapped nor reclaimed under memory
+// pressure. Leaving them behind pins one copy of every secret in RAM per
+// rebuild, forever.
+//
+// Called only after the symlink has been swapped, so the outgoing generation
+// stays intact for as long as anything can still be pointed at it.
+func pruneGenerations(genBase, keep string) {
+	entries, err := os.ReadDir(genBase)
+	if err != nil {
+		slog.Warn("listing generations", "path", genBase, "error", err)
+		return
+	}
+	for _, e := range entries {
+		path := filepath.Join(genBase, e.Name())
+		if path == keep {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("removing old generation", "path", path, "error", err)
+		}
+	}
 }
 
 // replaceSymlink points name at target without name ever being absent.
