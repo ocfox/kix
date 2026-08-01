@@ -1,7 +1,4 @@
 /kix
-/secrets/cache/
+/test.age
 *.test
 *.out
-
-test.age
-!tests/fixtures/test.age

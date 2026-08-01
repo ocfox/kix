@@ -13,6 +13,8 @@ type Manifest struct {
 	Identity string `json:"identity"`
 	// Cache is where sealed secrets are written, relative to the flake root.
 	Cache string `json:"cache"`
+	// SecretsDir holds the source .age files, relative to the flake root.
+	SecretsDir string `json:"secretsDir"`
 	// ExtraRecipients are encrypted to on top of Identity's own recipient.
 	ExtraRecipients []string `json:"extraRecipients"`
 	// Profiles are store paths of the per-host profile JSON files.
