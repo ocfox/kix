@@ -75,7 +75,7 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 		recips = append(recips, recip)
 	}
 
-	tmp, err := os.CreateTemp("", "kix-edit-*")
+	tmp, err := createPlaintextFile(plaintextDir())
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
