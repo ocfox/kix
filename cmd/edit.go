@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"filippo.io/age"
 	"github.com/spf13/cobra"
@@ -75,6 +76,14 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 		recips = append(recips, recip)
 	}
 
+	// Before the editor rather than after. Everything typed into it is lost if
+	// the write at the end fails, and a missing parent directory is how that
+	// happens: secretsDir does not exist yet in a fresh repository, so the
+	// very first secret would be typed out and thrown away.
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return fmt.Errorf("creating the directory for %q: %w", file, err)
+	}
+
 	tmp, err := createPlaintextFile(plaintextDir())
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
@@ -133,14 +142,54 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 	if err != nil {
 		return fmt.Errorf("encrypting: %w", err)
 	}
-	if err := os.WriteFile(file, encrypted, 0o644); err != nil {
-		return fmt.Errorf("writing encrypted file: %w", err)
+	if err := writeFileAtomic(file, encrypted, 0o644); err != nil {
+		return err
 	}
 
 	if existing {
 		slog.Info("edited and re-encrypted", "path", file)
 	} else {
 		slog.Info("created encrypted file", "path", file)
+	}
+	return nil
+}
+
+// writeFileAtomic replaces path in a single step.
+//
+// By the time this runs the plaintext exists nowhere else: the editor's copy
+// is removed as this function returns, so the file being replaced holds the
+// only other copy of the secret. A partial write over it would take both.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	// Alongside the target, so the rename stays within one filesystem.
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("creating a temporary file next to %q: %w", path, err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if err := func() error {
+		if _, err := tmp.Write(data); err != nil {
+			return fmt.Errorf("writing %q: %w", tmp.Name(), err)
+		}
+		if err := tmp.Chmod(perm); err != nil {
+			return fmt.Errorf("chmod %q: %w", tmp.Name(), err)
+		}
+		// The rename is only atomic with respect to the file's contents once
+		// those contents have reached the filesystem.
+		if err := tmp.Sync(); err != nil {
+			return fmt.Errorf("syncing %q: %w", tmp.Name(), err)
+		}
+		return nil
+	}(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing %q: %w", tmp.Name(), err)
+	}
+
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replacing %q: %w", path, err)
 	}
 	return nil
 }
