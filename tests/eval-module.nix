@@ -25,13 +25,19 @@ let
 
   # `self` is a fixpoint in a real flake; rebuild it here so the module sees
   # the same shape, with `outPath` pointing at the fixture rather than at kix.
-  evalFlake =
+  #
+  # `sourceInfo.outPath` is the repository the flake was fetched from, which is
+  # the same path unless the flake lives in a subdirectory of it. Passing the
+  # two separately is how that case gets tested at all.
+  evalFlakeIn =
+    { outPath, sourceOutPath }:
     module:
     let
       inputs = {
         inherit nixpkgs;
         self = flake // {
-          outPath = src;
+          inherit outPath;
+          sourceInfo.outPath = sourceOutPath;
           # flake-parts reads this to build its `inputs'` argument.
           inherit inputs;
         };
@@ -45,6 +51,11 @@ let
       };
     in
     flake;
+
+  evalFlake = evalFlakeIn {
+    outPath = src;
+    sourceOutPath = src;
+  };
 
   identity = "/nonexistent/kix-eval-check-identity.txt";
 
@@ -97,6 +108,21 @@ let
     };
   };
   poisonedPackages = poisoned.packages.${system};
+
+  # The same fixture seen as a flake living in a subdirectory of its
+  # repository, which is where the flake root and the git root stop agreeing.
+  subdirFlake =
+    evalFlakeIn
+      {
+        sourceOutPath = "${./fixtures}";
+        outPath = "${./fixtures}/eval-flake";
+      }
+      {
+        flake.kix = {
+          inherit identity;
+          nodes = { };
+        };
+      };
 
   checks = [
     {
@@ -161,4 +187,14 @@ if failed != [ ] then
 else
   runCommandLocal "kix-eval-module" { } ''
     echo "${toString (lib.length checks)} eval assertions passed" > "$out"
+
+    # A wrapper's text can only be read once it is built, so this one cannot
+    # live with the assertions above.
+    script=${subdirFlake.packages.${system}.kix-seal}/bin/kix-seal
+    if ! grep -q 'toplevel)/eval-flake' "$script"; then
+      echo "seal does not cd into the subdirectory the flake lives in:" >&2
+      grep -n 'rev-parse' "$script" >&2
+      exit 1
+    fi
+    echo "seal resolves against the flake subdirectory" >> "$out"
   ''

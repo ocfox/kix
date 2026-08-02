@@ -22,6 +22,16 @@ let
   # commands that write them.
   inStore = rel: "${self}/${lib.removePrefix "./" rel}";
 
+  # Where the flake sits inside its own source: empty at the top of a
+  # repository, "sub" for a flake in a subdirectory of one. The paths seal
+  # resolves are relative to the flake root, and git only knows the repository
+  # root, so without this the two disagree for anything but the common case.
+  flakeSubdir =
+    let
+      root = "${self.sourceInfo.outPath}";
+    in
+    if "${self}" == root then "" else lib.removePrefix "${root}/" "${self}";
+
   # Forces evaluation of every nixosConfiguration in `nodes`; narrow
   # `flake.kix.nodes` if that gets expensive.
   kixNodes = lib.filter (v: v.config ? kix) (lib.attrValues cfg.nodes);
@@ -152,7 +162,15 @@ in
         name = "kix-seal";
         runtimeInputs = [ pkgs.git ];
         text = ''
-          cd "$(git rev-parse --show-toplevel)"
+          root="$(git rev-parse --show-toplevel)/${flakeSubdir}"
+          # Being in a git repository is not the same as being in this flake's
+          # repository, and seal writes to the paths it finds there.
+          if [ ! -e "$root/flake.nix" ]; then
+            echo "kix: no flake.nix in $root" >&2
+            echo "kix: seal resolves its paths against the flake it was built from" >&2
+            exit 1
+          fi
+          cd "$root"
           exec ${lib.getExe kix} seal --manifest ${sealManifest} "$@"
         '';
       };
