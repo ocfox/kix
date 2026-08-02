@@ -109,10 +109,10 @@ func refreshRecipients(
 	oldIdentityPath string,
 	profiles []*profile.Profile,
 	ciphertexts map[string][]byte,
-) error {
+) ([]string, error) {
 	want, recips, err := recipientSet(m, masterID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	stampPath := filepath.Join(m.Cache, stampName)
@@ -122,9 +122,9 @@ func refreshRecipients(
 		// Nothing to compare against, so assume the sources are consistent and
 		// start recording from here. Rewriting every secret on the strength of
 		// a missing file would be a bad first impression.
-		return writeStamp(stampPath, want)
+		return nil, writeStamp(stampPath, want)
 	case err != nil:
-		return fmt.Errorf("reading %q: %w", stampPath, err)
+		return nil, fmt.Errorf("reading %q: %w", stampPath, err)
 	}
 
 	have := parseStamp(data)
@@ -141,9 +141,9 @@ func refreshRecipients(
 	if have.equal(want) {
 		if upgraded {
 			slog.Info("upgrading recipient stamp to fingerprint the plugin identity", "path", stampPath)
-			return writeStamp(stampPath, want)
+			return nil, writeStamp(stampPath, want)
 		}
-		return nil
+		return nil, nil
 	}
 
 	// Decrypting is only possible with whatever the files were written to. If
@@ -152,7 +152,7 @@ func refreshRecipients(
 	decryptID := masterID
 	if have.identity != want.identity {
 		if oldIdentityPath == "" {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"the source secrets are encrypted to %s but flake.kix.identity is now %s, "+
 					"so re-encrypting them needs the old identity as well as the new one:\n\n"+
 					"    nix run .#kix-seal -- --old-identity /path/to/old-identity.txt\n\n"+
@@ -161,7 +161,7 @@ func refreshRecipients(
 		}
 		idents, err := parseIdentityFile(oldIdentityPath, terminalUI(), askPassphrase)
 		if err != nil {
-			return fmt.Errorf("parsing --old-identity: %w", err)
+			return nil, fmt.Errorf("parsing --old-identity: %w", err)
 		}
 		decryptID = idents[0]
 		slog.Info("identity rotated, re-encrypting source secrets", "from", have.identity, "to", want.identity)
@@ -173,12 +173,9 @@ func refreshRecipients(
 	// repository half converted. Planning fails before anything is touched,
 	// decryption carries all of the identity interaction, and the writes then
 	// run back to back with nothing slow in between.
-	plan, err := planRewrites(profiles)
-	if err != nil {
-		return err
-	}
+	plan, foreign := planRewrites(profiles)
 	if len(plan) == 0 {
-		return writeStamp(stampPath, want)
+		return foreign, writeStamp(stampPath, want)
 	}
 
 	slog.Info("re-encrypting source secrets", "files", len(plan))
@@ -191,14 +188,14 @@ func refreshRecipients(
 
 	plaintexts, err := decryptRewrites(plan, ciphertexts, decryptID, masterID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := writeRewrites(plan, plaintexts, recips, ciphertexts); err != nil {
-		return err
+		return nil, err
 	}
 
-	return writeStamp(stampPath, want)
+	return foreign, writeStamp(stampPath, want)
 }
 
 // rewrite is one source file to re-encrypt, with every secret that reads it. A
@@ -209,24 +206,26 @@ type rewrite struct {
 	secretIDs  []string
 }
 
-// planRewrites groups the secrets by source file, and refuses the whole run if
-// any of them cannot be written. Reported up front and all at once: a secret
-// whose file lives outside the working tree is a configuration problem, and
-// finding out halfway through leaves some files on the new recipient set and
-// some on the old.
-func planRewrites(profiles []*profile.Profile) ([]rewrite, error) {
+// planRewrites groups the secrets by source file, and separates out the ones
+// with no copy in the working tree.
+//
+// Those are not a configuration problem to be refused: a secret whose `file`
+// comes from another flake belongs to whoever maintains that flake, and this
+// repository cannot rewrite it however the recipient set changes. They are
+// returned rather than dropped, because a recipient added here still cannot
+// read them, and only the caller knows when saying so will be seen.
+func planRewrites(profiles []*profile.Profile) (plan []rewrite, foreign []string) {
 	var (
-		unwritable []string
-		byPath     = make(map[string][]string)
-		seenBad    = make(map[string]bool)
-		seenPair   = make(map[[2]string]bool)
+		byPath   = make(map[string][]string)
+		seenBad  = make(map[string]bool)
+		seenPair = make(map[[2]string]bool)
 	)
 	for _, p := range profiles {
 		for id, s := range p.Secrets {
 			if s.SourcePath == "" {
 				if !seenBad[id] {
 					seenBad[id] = true
-					unwritable = append(unwritable, fmt.Sprintf("  %s (%s)", id, s.File))
+					foreign = append(foreign, fmt.Sprintf("%s (%s)", id, s.File))
 				}
 				continue
 			}
@@ -238,24 +237,30 @@ func planRewrites(profiles []*profile.Profile) ([]rewrite, error) {
 			byPath[s.SourcePath] = append(byPath[s.SourcePath], id)
 		}
 	}
+	slices.Sort(foreign)
 
-	if len(unwritable) > 0 {
-		slices.Sort(unwritable)
-		return nil, fmt.Errorf(
-			"the recipient set changed, but these secrets are read from outside the working tree "+
-				"and cannot be re-encrypted:\n\n%s\n\n"+
-				"point their `file` at a path kix can write, or re-encrypt them yourself; "+
-				"nothing has been changed",
-			strings.Join(unwritable, "\n"))
-	}
-
-	plan := make([]rewrite, 0, len(byPath))
+	plan = make([]rewrite, 0, len(byPath))
 	for path, ids := range byPath {
 		slices.Sort(ids)
 		plan = append(plan, rewrite{sourcePath: path, secretIDs: ids})
 	}
 	slices.SortFunc(plan, func(a, b rewrite) int { return strings.Compare(a.sourcePath, b.sourcePath) })
-	return plan, nil
+	return plan, foreign
+}
+
+// reportForeign names the secrets a recipient change could not reach. Loud,
+// because nothing else will say it: the seal succeeds, the stamp records the
+// new recipient set for everything this repository owns, and these files stay
+// readable only by whoever they were already encrypted to.
+func reportForeign(foreign []string) {
+	if len(foreign) == 0 {
+		return
+	}
+	slog.Warn("not re-encrypted: these secrets come from outside this flake, " +
+		"so the new recipients cannot read them until whoever maintains those files re-encrypts them")
+	for _, f := range foreign {
+		slog.Warn("owned elsewhere", "secret", f)
+	}
 }
 
 // decryptRewrites unwraps every source file once, returning the plaintexts by

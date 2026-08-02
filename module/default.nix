@@ -223,32 +223,48 @@ in
           inherit dirForUser;
           inherit (cfg.internal) cacheInStore;
           hostKeys = map (k: { inherit (k) path; }) cfg.hostKeys;
-          secrets = lib.mapAttrs (_: s: {
-            inherit (s)
-              name
-              file
-              path
-              mode
-              owner
-              group
-              beforeUserborn
-              ;
-            # Where `file` lives in the working tree, so seal can rewrite it
-            # when the recipient set changes. Anywhere in the flake will do,
-            # not just secretsDir: a path literal in the flake is a subpath of
-            # the flake source, so the working tree copy is the same name under
-            # the flake root. Null for a file that came from somewhere else,
-            # which seal has no writable copy of and must not touch.
-            sourcePath =
-              let
-                prefix = "${cfg.internal.flakeRoot}/";
-                f = toString s.file;
-              in
-              if cfg.internal.flakeRoot != null && lib.hasPrefix prefix f then
-                lib.removePrefix prefix f
-              else
-                null;
-          }) cfg.secrets;
+          secrets = lib.mapAttrs (
+            _: s:
+            let
+              f = toString s.file;
+              prefix = "${cfg.internal.flakeRoot}/";
+              inFlake = cfg.internal.flakeRoot != null && lib.hasPrefix prefix f;
+            in
+            {
+              inherit (s)
+                name
+                path
+                mode
+                owner
+                group
+                beforeUserborn
+                ;
+
+              # Just this file, never the tree it sits in. A subpath of the
+              # flake source carries the whole source as its context, and the
+              # unit that deploys a host references this profile, so every host
+              # would otherwise carry every other host's sealed secrets.
+              #
+              # Narrowed here and not in the `file` option itself: `sourcePath`
+              # below reads the path as written, and a store path holding one
+              # file no longer says where in the flake it came from. A path
+              # outside the store is left alone, so pointing `file` there fails
+              # where it always did rather than during evaluation.
+              file =
+                if lib.hasPrefix builtins.storeDir f && builtins.pathExists f then
+                  builtins.path { path = f; }
+                else
+                  f;
+
+              # Where `file` lives in the working tree, so seal can rewrite it
+              # when the recipient set changes. Anywhere in the flake will do,
+              # not just secretsDir: a path literal in the flake is a subpath of
+              # the flake source, so the working tree copy is the same name under
+              # the flake root. Null for a file that came from somewhere else --
+              # another flake's secrets are someone else's to re-encrypt.
+              sourcePath = if inFlake then lib.removePrefix prefix f else null;
+            }
+          ) cfg.secrets;
         };
       };
 

@@ -149,6 +149,12 @@ the header holds one opaque stanza per recipient, so the set has to be
 remembered rather than derived. It contains public keys and fingerprints only,
 and is committed with the cache it describes.
 
+The stamp covers the secrets this flake owns. A secret whose `file` comes from
+somewhere else — another flake's `.age` file — has no copy kix can write, so a
+recipient added here cannot read it until whoever maintains that file
+re-encrypts it. `seal` names those secrets when it finishes rather than
+refusing to run.
+
 Re-encrypting reads every source secret, and each one is unwrapped separately.
 With a plugin identity that means one confirmation per secret, on the hardware
 holding the key — a rotation is the one operation whose cost grows with the
