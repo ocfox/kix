@@ -116,7 +116,7 @@ in
                   imports = [ (kixSrc + "/module") ];
                   kix.internal.cacheRoot = inStore cfg.cache;
                   kix.internal.secretsDir = inStore cfg.secretsDir;
-                  kix.internal.secretsDirRelative = lib.removePrefix "./" cfg.secretsDir;
+                  kix.internal.flakeRoot = "${self}";
                 };
             };
           };

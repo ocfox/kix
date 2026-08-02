@@ -177,11 +177,15 @@ in
         description = "Set from `flake.kix.secretsDir` by `flake.kix.nixosModule`.";
       };
 
-      secretsDirRelative = mkOption {
+      flakeRoot = mkOption {
         internal = true;
         type = types.nullOr types.str;
         default = null;
-        description = "The same directory as `secretsDir`, relative to the flake root.";
+        description = ''
+          The flake source in the store, used to map a secret's `file` back to
+          the working tree copy that `seal` rewrites. Set by
+          `flake.kix.nixosModule`.
+        '';
       };
 
       cacheInStore = mkOption {
@@ -230,15 +234,18 @@ in
               beforeUserborn
               ;
             # Where `file` lives in the working tree, so seal can rewrite it
-            # when the recipient set changes. Null when `file` was pointed
-            # somewhere other than secretsDir, which seal must not touch.
+            # when the recipient set changes. Anywhere in the flake will do,
+            # not just secretsDir: a path literal in the flake is a subpath of
+            # the flake source, so the working tree copy is the same name under
+            # the flake root. Null for a file that came from somewhere else,
+            # which seal has no writable copy of and must not touch.
             sourcePath =
               let
-                prefix = "${cfg.internal.secretsDir}/";
+                prefix = "${cfg.internal.flakeRoot}/";
                 f = toString s.file;
               in
-              if cfg.internal.secretsDirRelative != null && lib.hasPrefix prefix f then
-                "${cfg.internal.secretsDirRelative}/${lib.removePrefix prefix f}"
+              if cfg.internal.flakeRoot != null && lib.hasPrefix prefix f then
+                lib.removePrefix prefix f
               else
                 null;
           }) cfg.secrets;
