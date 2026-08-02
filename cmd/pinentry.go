@@ -99,7 +99,11 @@ func askPinentry(prog, desc, prompt string) ([]byte, error) {
 		}
 		switch {
 		case strings.HasPrefix(line, "D "):
-			pin = percentDecode(line[2:])
+			// Appended, not assigned: Assuan caps a line at around a kilobyte
+			// and splits anything longer across several data lines, and taking
+			// only the last one would hand back a passphrase that is wrong
+			// without looking wrong.
+			pin = append(pin, percentDecode(line[2:])...)
 		case line == "OK" || strings.HasPrefix(line, "OK "):
 			c.command("BYE")
 			return pin, nil

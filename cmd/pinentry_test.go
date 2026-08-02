@@ -275,3 +275,17 @@ func TestAskPinentryDecodesTheSecret(t *testing.T) {
 		t.Errorf("askPinentry returned %q, want %q", got, "100%\nsure")
 	}
 }
+
+// Assuan splits data longer than about a kilobyte across several lines, so a
+// long passphrase arrives in pieces and every piece belongs to it.
+func TestAskPinentryJoinsSplitData(t *testing.T) {
+	prog := fakePinentry(t, `printf 'D first-\nD second-\nD third\nOK\n'`)
+
+	got, err := askPinentry(prog, "desc", "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "first-second-third"; string(got) != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
