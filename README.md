@@ -8,18 +8,29 @@ re-encrypts each one to every **host's** public key, into a cache committed
 alongside the sources; at activation a host decrypts its own entries with its
 SSH host key. Your identity is only needed when secrets change.
 
-Requires `systemd.sysusers` or `services.userborn`.
+Requires [flake-parts](https://flake.parts), and `systemd.sysusers` or
+`services.userborn`.
 
 ## Usage
 
-In your flake:
+Create an identity, outside the flake:
+
+```
+age-keygen -o ~/.config/age/kix-identity.txt              # an age key
+age-keygen | age -p -o ~/.config/age/kix-identity.txt     # the same, behind a passphrase
+age-plugin-yubikey                                        # a Yubikey slot
+```
+
+An OpenSSH private key you already have works too, ed25519 or RSA.
+
+Then in your flake, inside `mkFlake`:
 
 ```nix
 {
   imports = [ inputs.kix.flakeModules.default ];
 
   flake.kix = {
-    identity = "/home/you/.config/age/kix-identity.txt";
+    identity = "/home/you/.config/age/kix-identity.txt";  # absolute, and a string
     secretsDir = "./secrets";       # sources, relative to the flake root
     cache = "./secrets/cache";      # sealed output, commit it
     extraRecipients = [ ];          # further recipients for the sources
@@ -27,25 +38,23 @@ In your flake:
 }
 ```
 
-`identity` decrypts every secret kix manages. Give it an absolute path **as a
-string**: a path literal has to be committed and lands world readable in
-`/nix/store`, and kix refuses to evaluate if it finds a bare age key in the
-flake. It can be an age key or an OpenSSH private key, passphrase protected or
-not — kix prompts through the first `pinentry` on `PATH`, or the terminal. A
-plugin identity is the exception, since `AGE-PLUGIN-*` only names a slot on a
-token:
+A path literal like `./secrets/identity.txt` would be committed and land world
+readable in `/nix/store`, so kix refuses to evaluate on a bare age key inside
+the flake. A plugin identity is the exception, since `AGE-PLUGIN-*` only names
+a slot on a token:
 
 ```nix
 flake.kix.identity = inputs.self + "/secrets/age-yubikey-identity-abcd1234.txt";
 ```
 
-In each host, import the pre-wired module rather than `nixosModules.default`:
+In each host, import the pre-wired module — the bare `nixosModules.default`
+throws:
 
 ```nix
 {
   imports = [ config.flake.kix.nixosModule ];
 
-  kix.hostPubkey = "ssh-ed25519 AAAAC3Nz...";
+  kix.hostPubkey = "ssh-ed25519 AAAAC3Nz...";  # /etc/ssh/ssh_host_ed25519_key.pub
   kix.dir = "/run/kix";             # where decrypted secrets are readable
   kix.mountPoint = "/run/kix.d";    # ramfs holding them
   kix.hostKeys = config.services.openssh.hostKeys;
@@ -62,14 +71,16 @@ In each host, import the pre-wired module rather than `nixosModules.default`:
 ```
 
 The defaults are `root` and `0400`, which a service running as its own user
-cannot read. A `file` from outside the flake is one kix reads but never
-rewrites. Consumers read `path`:
+cannot read. A `file` from outside the flake is read but never rewritten.
+Consumers read `path`:
 
 ```nix
 services.foo.environmentFile = config.kix.secrets.my-secret.path;
 ```
 
 ## Commands
+
+The flake module adds these to your own flake:
 
 ```
 nix run .#kix-edit -- secrets/my-secret.age   # create or edit a secret
