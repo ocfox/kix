@@ -310,6 +310,20 @@ func TestRefreshRecipientsRefusesUnwritableSourceWithoutTouchingAnything(t *test
 	}
 }
 
+// `kix.hostPubkey = ./secrets/host.pub` hands the file's contents straight to
+// the parser, and a file ends in a newline. agessh accepts it; age's own
+// parser used to reject it, so an age host key failed where an SSH one worked.
+func TestParseRecipientToleratesTheNewlineAFileEndsWith(t *testing.T) {
+	for _, key := range []string{
+		"age1kqn3nznrh0hmmkrvszcxzc2k8mlc94efqnm803axk4nt8p4wjv9szlzu2x",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN8x0GNwFpNmVDLBHVJ5tQnFAF7mV8vNBOZ0aQKmm4mm root@host",
+	} {
+		if _, err := parseRecipient(key+"\n", nil); err != nil {
+			t.Errorf("newline-terminated recipient rejected: %v", err)
+		}
+	}
+}
+
 // A PQ identity is one parseIdentity accepts, so it must not fall through to
 // the extra recipients alone.
 func TestIdentityRecipientHybrid(t *testing.T) {
