@@ -180,7 +180,9 @@ the hosts, which only ever get their own sealed copies.
 Both the source `.age` files and the sealed cache are committed, and both end
 up world readable in `/nix/store` — that is what encryption is for. The source
 is encrypted to you, the cache to each host, and only the cache reaches the
-host.
+host. The source stays behind on purpose: nothing on a host could read it, and
+anything in a system closure travels wherever that closure does, a binary cache
+included.
 
 Your identity and the plaintext are the two things that are in neither git nor
 the store. Plaintext exists only on ramfs under `kix.mountPoint`, with the mode

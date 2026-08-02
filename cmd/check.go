@@ -51,7 +51,7 @@ func runCheck(profilePath string) error {
 		if err != nil {
 			return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
 		}
-		path := filepath.Join(p.CacheInStore, secure.HashSecret(original, p.HostPubkey))
+		path := filepath.Join(p.CacheInStore, secure.CacheEntryName(id, original, p.HostPubkey))
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			missing = append(missing, path)
 		}

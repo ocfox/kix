@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -208,5 +209,52 @@ func TestDeployToFS_unknownGroupIsAnError(t *testing.T) {
 	var unknownGroup user.UnknownGroupError
 	if !errors.As(err, &unknownGroup) {
 		t.Errorf("error was %v, want it to wrap user.UnknownGroupError", err)
+	}
+}
+
+// A deploy has no source ciphertext to hash, so it finds an entry by name. The
+// names have to stay tellable apart when one secret's id is a prefix of
+// another's.
+func TestFindCacheEntryDistinguishesPrefixedIDs(t *testing.T) {
+	db := CacheEntryName("db", []byte("one"), "pubkey")
+	dbBackup := CacheEntryName("db-backup", []byte("two"), "pubkey")
+	names := []string{db, dbBackup}
+
+	for id, want := range map[string]string{"db": db, "db-backup": dbBackup} {
+		got, err := FindCacheEntry(names, id)
+		if err != nil {
+			t.Errorf("%s: %v", id, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s resolved to %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestFindCacheEntryReportsWhatIsWrong(t *testing.T) {
+	name := CacheEntryName("db", []byte("one"), "pubkey")
+
+	if _, err := FindCacheEntry([]string{name}, "other"); err == nil {
+		t.Error("a secret with no entry was accepted")
+	}
+
+	stale := CacheEntryName("db", []byte("two"), "pubkey")
+	_, err := FindCacheEntry([]string{name, stale}, "db")
+	if err == nil {
+		t.Fatal("two entries for one secret were accepted")
+	}
+	if !strings.Contains(err.Error(), "seal") {
+		t.Errorf("error does not say what clears it: %v", err)
+	}
+}
+
+// The cache directory holds one entry per secret and nothing else, but a name
+// that is not one must not be mistaken for one.
+func TestFindCacheEntryIgnoresNamesThatAreNotEntries(t *testing.T) {
+	for _, name := range []string{"db", "db-", "db-notahash", "db-" + strings.Repeat("z", 64)} {
+		if got, err := FindCacheEntry([]string{name}, "db"); err == nil {
+			t.Errorf("%q was taken for an entry, resolving to %q", name, got)
+		}
 	}
 }

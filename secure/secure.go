@@ -20,7 +20,7 @@ import (
 	"github.com/ocfox/kix/profile"
 )
 
-// HashSecret names the cache entry for a source secret sealed to a given host.
+// HashSecret identifies a source secret sealed to a given host.
 //
 // Both inputs matter: the same ciphertext sealed to two hosts must land in two
 // entries, and a changed source must not reuse the old host's entry.
@@ -29,6 +29,52 @@ func HashSecret(content []byte, hostRecipient string) string {
 	h.Write(content)
 	h.Write([]byte(hostRecipient))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hashHexLen is how long HashSecret's output is, which is what tells an entry
+// name apart from a secret id that merely starts like one.
+const hashHexLen = 2 * blake2b.Size256
+
+// CacheEntryName is what a sealed secret is called inside a host's cache
+// directory.
+//
+// Both halves earn their place. The hash makes a stale entry visible without
+// decrypting it, which is how seal and check know the cache still matches the
+// source. The id makes the entry findable by a deploy that has never seen the
+// source: it holds no identity that could read the source anyway, and shipping
+// it one only to compute a filename would put material encrypted to the admin
+// identity on every host.
+func CacheEntryName(id string, content []byte, hostRecipient string) string {
+	return id + "-" + HashSecret(content, hostRecipient)
+}
+
+// FindCacheEntry picks the entry belonging to id out of a directory listing.
+//
+// Matching on the prefix alone would let a secret named "db" claim the entry
+// of one named "db-backup", so the rest of the name has to look like a hash
+// and nothing else.
+func FindCacheEntry(names []string, id string) (string, error) {
+	var found []string
+	for _, name := range names {
+		rest, ok := strings.CutPrefix(name, id+"-")
+		if !ok || len(rest) != hashHexLen {
+			continue
+		}
+		if _, err := hex.DecodeString(rest); err != nil {
+			continue
+		}
+		found = append(found, name)
+	}
+
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", fmt.Errorf("no sealed entry for secret %q", id)
+	default:
+		return "", fmt.Errorf("secret %q has %d sealed entries (%s); seal removes the outdated ones",
+			id, len(found), strings.Join(found, ", "))
+	}
 }
 
 // DecryptAge decrypts an age file with the first of idents that can read it.

@@ -99,8 +99,8 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 			plan[hostID] = make(hostPlan)
 		}
 		for id := range p.Secrets {
-			hash := secure.HashSecret(ciphertexts[id], p.HostPubkey)
-			plan[hostID][id] = filepath.Join(m.Cache, hostID, hash)
+			plan[hostID][id] = filepath.Join(m.Cache, hostID,
+				secure.CacheEntryName(id, ciphertexts[id], p.HostPubkey))
 		}
 	}
 

@@ -213,6 +213,12 @@ in
 
       # The wire format read by the kix binary. An explicit projection, so
       # adding an option above does not change it.
+      #
+      # This is the half that travels to the host, so it names no source .age
+      # file. Those are encrypted to the admin identity, which decrypts every
+      # secret on every host, and a host holds nothing that could read one:
+      # they would be along purely to name a cache entry, and would go wherever
+      # the system closure goes, a binary cache included.
       profile = mkOption {
         internal = true;
         readOnly = true;
@@ -223,27 +229,40 @@ in
           inherit dirForUser;
           inherit (cfg.internal) cacheInStore;
           hostKeys = map (k: { inherit (k) path; }) cfg.hostKeys;
+          secrets = lib.mapAttrs (_: s: {
+            inherit (s)
+              name
+              path
+              mode
+              owner
+              group
+              beforeUserborn
+              ;
+          }) cfg.secrets;
+        };
+      };
+
+      # The same profile with the source .age files named, for the commands
+      # that run where the admin identity already is: `seal` on their machine
+      # and `check` on the builder. Never referenced by anything the host
+      # installs -- `system.checks` are build dependencies and stay out of the
+      # closure, which is the whole reason check may read these at all.
+      adminProfile = mkOption {
+        internal = true;
+        readOnly = true;
+        type = types.attrs;
+        default = cfg.internal.profile // {
           secrets = lib.mapAttrs (
-            _: s:
+            name: s:
             let
               f = toString s.file;
               prefix = "${cfg.internal.flakeRoot}/";
               inFlake = cfg.internal.flakeRoot != null && lib.hasPrefix prefix f;
             in
-            {
-              inherit (s)
-                name
-                path
-                mode
-                owner
-                group
-                beforeUserborn
-                ;
-
-              # Just this file, never the tree it sits in. A subpath of the
-              # flake source carries the whole source as its context, and the
-              # unit that deploys a host references this profile, so every host
-              # would otherwise carry every other host's sealed secrets.
+            cfg.internal.profile.secrets.${name}
+            // {
+              # Just this file, never the tree it sits in: a subpath of the
+              # flake source carries the whole source as its context.
               #
               # Narrowed here and not in the `file` option itself: `sourcePath`
               # below reads the path as written, and a store path holding one
@@ -276,6 +295,15 @@ in
           builtins.toJSON cfg.internal.profile
         );
       };
+
+      adminProfileFile = mkOption {
+        internal = true;
+        readOnly = true;
+        type = types.package;
+        default = pkgs.writeText "kix-admin-profile-${config.networking.hostName}.json" (
+          builtins.toJSON cfg.internal.adminProfile
+        );
+      };
     };
   };
 
@@ -285,9 +313,13 @@ in
 
       # Fails the build if any secret is unsealed, rather than at boot. Runs
       # cfg.package on the builder, so it does not survive cross-compilation.
+      #
+      # Reads the admin profile, and may: `system.checks` are build
+      # dependencies whose output nothing installs, so the source .age files
+      # this names never reach the host.
       checkSealed =
         pkgs.runCommandLocal "kix-seal-check-${config.networking.hostName}" { }
-          "${lib.getExe cfg.package} check --profile ${profileFile} > $out";
+          "${lib.getExe cfg.package} check --profile ${cfg.internal.adminProfileFile} > $out";
     in
     {
       assertions = [
