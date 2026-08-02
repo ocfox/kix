@@ -25,6 +25,17 @@ var (
 // host.
 type hostPlan = map[string]string
 
+// sourceOf is where seal reads a secret from. The working tree copy, not the
+// one in the flake source, so a secret just written by `edit` does not have to
+// be committed before it can be sealed. Secrets pointed outside `secretsDir`
+// have no working tree path and are read where they are.
+func sourceOf(s profile.Secret) string {
+	if s.SourcePath != "" {
+		return s.SourcePath
+	}
+	return s.File
+}
+
 var sealCmd = &cobra.Command{
 	Use:   "seal",
 	Short: "Re-encrypt secrets for each host",
@@ -62,9 +73,14 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 	ciphertexts := make(map[string][]byte)
 	for _, p := range allProfiles {
 		for id, s := range p.Secrets {
-			data, err := os.ReadFile(s.File)
+			src := sourceOf(s)
+			data, err := os.ReadFile(src)
+			if os.IsNotExist(err) {
+				return fmt.Errorf("secret %q is declared but %s does not exist:\n\n"+
+					"    nix run .#kix-edit -- %s", id, src, src)
+			}
 			if err != nil {
-				return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
+				return fmt.Errorf("reading secret %q (%s): %w", id, src, err)
 			}
 			ciphertexts[id] = data
 		}

@@ -128,6 +128,11 @@ must be committed**: the NixOS module locates it inside the flake source in the
 store, and for a git flake an uncommitted file is not there. `nixos-rebuild`
 fails via `system.checks` if anything is unsealed.
 
+`seal` reads the source `.age` files from your working tree, so a secret you
+have just created does not have to be committed before you can seal it. The
+build does read them from the flake source, so it has to be committed before
+`nixos-rebuild`.
+
 ### Changing recipients
 
 Adding to `extraRecipients` does not by itself reach the secrets you already

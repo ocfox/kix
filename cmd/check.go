@@ -36,6 +36,18 @@ func runCheck(profilePath string) error {
 	var missing []string
 	for id, s := range p.Secrets {
 		original, err := os.ReadFile(s.File)
+		if os.IsNotExist(err) {
+			// The one place a declared-but-uncreated secret is reported. Its
+			// absence is not an eval error, so it surfaces here instead.
+			target := s.SourcePath
+			if target == "" {
+				target = s.File
+			}
+			return fmt.Errorf("secret %q is declared but %s does not exist:\n\n"+
+				"    nix run .#kix-edit -- %s\n\n"+
+				"an uncommitted file is not in the flake source either, so commit it once created",
+				id, s.File, target)
+		}
 		if err != nil {
 			return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
 		}
