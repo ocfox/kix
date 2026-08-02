@@ -49,10 +49,12 @@ let
               or set `kix.secrets.${name}.file` explicitly.
             ''
           else
-            let
-              path = cfg.internal.secretsDir + "/${name}.age";
-            in
-            lib.throwIfNot (builtins.pathExists path) "kix: secret file not found: ${path}" path;
+            # Deliberately not checked for existence here: a secret you have
+            # declared but not yet created is a legal intermediate state, and
+            # `check` reports it at build time. Asserting it during eval would
+            # break every command that reads the configuration, including the
+            # one that creates the file.
+            cfg.internal.secretsDir + "/${name}.age";
         defaultText = literalExpression "<flake.kix.secretsDir>/\${name}.age";
         description = "Age file the secret is loaded from.";
       };

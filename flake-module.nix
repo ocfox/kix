@@ -131,13 +131,21 @@ in
     let
       kix = pkgs.callPackage (kixSrc + "/package.nix") { };
 
-      manifest = pkgs.writeText "kix-manifest.json" (
-        builtins.toJSON {
-          inherit identity;
-          inherit (cfg) cache secretsDir extraRecipients;
-          profiles = map (n: n.config.kix.internal.profileFile) kixNodes;
-        }
+      repoManifest = {
+        inherit identity;
+        inherit (cfg) cache secretsDir extraRecipients;
+      };
+
+      sealManifest = pkgs.writeText "kix-manifest.json" (
+        builtins.toJSON (
+          repoManifest // { profiles = map (n: n.config.kix.internal.profileFile) kixNodes; }
+        )
       );
+
+      # Without `profiles`, so writing a secret never evaluates a single host.
+      # A secret you have declared but not yet created would otherwise fail the
+      # eval of the very command that creates it.
+      editManifest = pkgs.writeText "kix-manifest.json" (builtins.toJSON repoManifest);
 
       # `flake.kix.cache` is relative to the flake root, not to $PWD.
       seal = pkgs.writeShellApplication {
@@ -145,7 +153,7 @@ in
         runtimeInputs = [ pkgs.git ];
         text = ''
           cd "$(git rev-parse --show-toplevel)"
-          exec ${lib.getExe kix} seal --manifest ${manifest} "$@"
+          exec ${lib.getExe kix} seal --manifest ${sealManifest} "$@"
         '';
       };
 
@@ -153,7 +161,7 @@ in
       edit = pkgs.writeShellApplication {
         name = "kix-edit";
         text = ''
-          exec ${lib.getExe kix} edit --manifest ${manifest} "$@"
+          exec ${lib.getExe kix} edit --manifest ${editManifest} "$@"
         '';
       };
     in
