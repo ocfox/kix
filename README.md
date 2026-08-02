@@ -3,23 +3,12 @@
 Experiment. A secret manager for NixOS built on `filippo.io/age`, with Yubikey
 plugin support.
 
-## How it works
+Secrets live in your repository as `.age` files encrypted to **you**. `seal`
+re-encrypts each one to every **host's** public key, into a cache committed
+alongside the sources; at activation a host decrypts its own entries with its
+SSH host key. Your identity is only needed when secrets change.
 
-Secrets live in your repository as `.age` files encrypted to **you**. Hosts
-never hold your identity, so they cannot read those directly. `seal` decrypts
-each one and re-encrypts it to each **host's** public key, into a cache that is
-committed alongside them. At activation a host decrypts its own cache entries
-with its SSH host key.
-
-The point of the cache is that your identity is only needed when secrets
-change, not when a machine boots or rebuilds. The cost is a second copy of
-every secret in the repository.
-
-## Requirements
-
-`systemd.sysusers` or `services.userborn` must be enabled, so that the users
-owning secrets exist by the time they are deployed. Secrets needed by user
-creation itself can be deployed earlier with `beforeUserborn`.
+Requires `systemd.sysusers` or `services.userborn`.
 
 ## Usage
 
@@ -28,27 +17,23 @@ In your flake:
 ```nix
 {
   imports = [ inputs.kix.flakeModules.default ];
-  flake.kix.identity = "/home/you/.config/age/kix-identity.txt";
+
+  flake.kix = {
+    identity = "/home/you/.config/age/kix-identity.txt";
+    secretsDir = "./secrets";       # sources, relative to the flake root
+    cache = "./secrets/cache";      # sealed output, commit it
+    extraRecipients = [ ];          # further recipients for the sources
+  };
 }
 ```
 
-`identity` is the key that decrypts every secret kix manages. Give it an
-absolute path **as a string**, so it stays outside the flake. A path written as
-`./secrets/identity.txt` or `inputs.self + "/secrets/identity.txt"` has to be
-committed for the flake to see it at all, and travels into `/nix/store` world
-readable along with the rest of your flake source. kix refuses to evaluate if
-it finds a bare age key there.
-
-The identity can be an age key or an OpenSSH private key, and either may be
-protected by a passphrase — an `age -p` file or an encrypted OpenSSH key. kix
-asks for the passphrase through `pinentry` if one is on `PATH`, and reads from
-the terminal otherwise. There is no setting for which
-pinentry to use: put the one you want earlier on `PATH`, the same way
-`pinentry-curses` and the usual wrapper scripts are already selected. A
-hardware token's PIN goes to the same prompt.
-
-A plugin identity is the exception and can live in the flake, since
-`AGE-PLUGIN-*` only names a slot on a hardware token and holds no key material:
+`identity` decrypts every secret kix manages. Give it an absolute path **as a
+string**: a path literal has to be committed and lands world readable in
+`/nix/store`, and kix refuses to evaluate if it finds a bare age key in the
+flake. It can be an age key or an OpenSSH private key, passphrase protected or
+not — kix prompts through the first `pinentry` on `PATH`, or the terminal. A
+plugin identity is the exception, since `AGE-PLUGIN-*` only names a slot on a
+token:
 
 ```nix
 flake.kix.identity = inputs.self + "/secrets/age-yubikey-identity-abcd1234.txt";
@@ -61,64 +46,28 @@ In each host, import the pre-wired module rather than `nixosModules.default`:
   imports = [ config.flake.kix.nixosModule ];
 
   kix.hostPubkey = "ssh-ed25519 AAAAC3Nz...";
+  kix.dir = "/run/kix";             # where decrypted secrets are readable
+  kix.mountPoint = "/run/kix.d";    # ramfs holding them
+  kix.hostKeys = config.services.openssh.hostKeys;
 
   kix.secrets.my-secret = {
-    owner = "nginx";
-    mode = "0440";
+    owner = "nginx";                # default root
+    group = "nginx";                # default: the owner's primary group
+    mode = "0440";                  # default 0400
+    file = ./secrets/my-secret.age; # default <secretsDir>/<name>.age
+    name = "my-secret";             # default: the attribute name
+    beforeUserborn = false;         # deploy before users exist: root-only, under <dir>-for-user
   };
 }
 ```
 
-A secret takes its file from its attribute name: `kix.secrets.my-secret` reads
-`<flake.kix.secretsDir>/my-secret.age`, so `./secrets/my-secret.age` by default.
-Declaring one before creating it is fine — the build is what reports it missing,
-and `edit` is what creates it.
-
-`file` points somewhere else. Anywhere in the flake works and `seal` goes on
-maintaining it; a file from outside the flake is one kix can read but never
-rewrite.
-
-The default owner is `root` and the default mode `0400`, which a service running
-as its own user cannot read — set `owner` to the user that needs it.
-
-Reference a secret through its `path`, which is read-only:
+The defaults are `root` and `0400`, which a service running as its own user
+cannot read. A `file` from outside the flake is one kix reads but never
+rewrites. Consumers read `path`:
 
 ```nix
 services.foo.environmentFile = config.kix.secrets.my-secret.path;
 ```
-
-## Options
-
-`flake.kix.*`, once per flake:
-
-| | default | |
-|---|---|---|
-| `identity` | — | Age identity that decrypts the source `.age` files. |
-| `secretsDir` | `./secrets` | Source `.age` files, relative to the flake root. |
-| `cache` | `./secrets/cache` | Where `seal` writes the sealed secrets. Must be committed. |
-| `extraRecipients` | `[ ]` | Further recipients the sources are encrypted to, on top of your identity's own. |
-
-`kix.*`, once per host:
-
-| | default | |
-|---|---|---|
-| `hostPubkey` | — | Public key the host's secrets are sealed to. A string, or a path to read it from. |
-| `hostKeys` | `config.services.openssh.hostKeys` | Private keys tried when decrypting at activation. |
-| `dir` | `/run/kix` | Where decrypted secrets are reachable. |
-| `mountPoint` | `/run/kix.d` | Where the ramfs holding them is mounted. |
-| `secrets` | `{ }` | The secrets themselves. |
-
-`kix.secrets.<name>.*`:
-
-| | default | |
-|---|---|---|
-| `owner` | `root` | User of the decrypted secret. |
-| `group` | the owner's primary group | Group of the decrypted secret. |
-| `mode` | `0400` | Permissions of the decrypted secret. |
-| `file` | `<secretsDir>/<name>.age` | Source the secret is loaded from. |
-| `name` | the attribute name | Filename the secret is deployed under. |
-| `beforeUserborn` | `false` | Deploy before users are created. Such a secret can only be owned by `root`, since no other user exists yet, and lands under `<dir>-for-user`. |
-| `path` | read-only | Where the decrypted secret can be read. Point consumers at this. |
 
 ## Commands
 
@@ -127,86 +76,21 @@ nix run .#kix-edit -- secrets/my-secret.age   # create or edit a secret
 nix run .#kix-seal                            # re-encrypt for every host
 ```
 
-`seal` writes `flake.kix.cache` (default `./secrets/cache`). **That directory
-must be committed**: the NixOS module locates it inside the flake source in the
-store, and for a git flake an uncommitted file is not there. `nixos-rebuild`
-fails via `system.checks` if anything is unsealed.
-
-`seal` reads the source `.age` files from your working tree, so a secret you
-have just created does not have to be committed before you can seal it. The
-build does read them from the flake source, so it has to be committed before
-`nixos-rebuild`.
-
-### Changing recipients
-
-Adding to `extraRecipients` does not by itself reach the secrets you already
-have: recipients are only applied when a file is written, and `edit` does
-nothing when the content has not changed.
-
-`seal` handles that for you. It records the recipient set it last wrote in
-`<cache>/.recipients`, and when that no longer matches the manifest it
-re-encrypts every source secret before sealing. There is no separate command
-and nothing to remember.
-
-The stamp is needed because an age file does not say who it is encrypted to —
-the header holds one opaque stanza per recipient, so the set has to be
-remembered rather than derived. It contains public keys and fingerprints only,
-and is committed with the cache it describes.
-
-The stamp covers the secrets this flake owns. A secret whose `file` comes from
-somewhere else — another flake's `.age` file — has no copy kix can write, so a
-recipient added here cannot read it until whoever maintains that file
-re-encrypts it. `seal` names those secrets when it finishes rather than
-refusing to run.
-
-Re-encrypting reads every source secret, and a plugin identity unwraps each one
-in a process of its own. A PIN is asked for once and remembered for the run. A
-touch is not kix's to remember — the token asks for it however its slot's touch
-policy says, so a policy of `always` is one touch per secret while a cached one
-is usually a single touch for the whole run. `seal` says how many files to
-expect before it starts. Interrupting it is safe: nothing is written until every
-secret has been read, and re-running picks up wherever it stopped.
-
-### Rotating the identity
-
-Changing `flake.kix.identity` is the one case `seal` cannot do on its own: the
-existing files are encrypted to the key you are replacing, so re-encrypting
-them needs both. `seal` recognises this and asks for the old one:
+`seal` reads the sources from your working tree. Sources and cache both have to
+be committed before `nixos-rebuild`, which fails via `system.checks` if
+anything is unsealed. `seal` re-encrypts every source when `extraRecipients`
+changes, and asks for the old key when `identity` does:
 
 ```
 nix run .#kix-seal -- --old-identity /path/to/old-identity.txt
 ```
 
-You must still hold the old identity. Nothing else can read those files — not
-the hosts, which only ever get their own sealed copies.
-
 ## Where things live
 
-Both the source `.age` files and the sealed cache are committed, and both end
-up world readable in `/nix/store` — that is what encryption is for. The source
-is encrypted to you, the cache to each host, and only the cache reaches the
-host. The source stays behind on purpose: nothing on a host could read it, and
-anything in a system closure travels wherever that closure does, a binary cache
-included.
-
-Your identity and the plaintext are the two things that are in neither git nor
-the store. Plaintext exists only on ramfs under `kix.mountPoint`, with the mode
-and owner the secret declares — ramfs rather than tmpfs because tmpfs pages can
-be swapped out. Only the current generation is kept; older ones are removed
-after the symlink is swapped.
-
-On your own machine, `edit` decrypts into `$XDG_RUNTIME_DIR`, or `/dev/shm` if
-that is unset, so the plaintext stays in memory rather than landing somewhere a
-delete would only unlink. It warns and falls back to a temporary directory if
-neither is memory backed.
-
-### Your editor writes to disk, and kix cannot stop it
-
-`edit` only controls the file it hands over. Editors keep their own notes about
-what you were editing — swap files, undo history, backups, `viminfo`/`shada` —
-and those land wherever the editor puts them, usually under your home
-directory. Any of them can hold part of a secret.
-
-`$EDITOR` is whatever you make it, so kix cannot turn these off for you.
+Sources and cache are both committed and both world readable in `/nix/store`.
+Plaintext only ever exists on ramfs under `kix.mountPoint`, and `edit` decrypts
+into `$XDG_RUNTIME_DIR` or `/dev/shm`. kix cannot stop your editor writing to
+disk: swap files, undo history and backups land wherever it puts them, and any
+of them can hold part of a secret.
 
 Thanks [vaultix](https://github.com/milieuim/vaultix).
