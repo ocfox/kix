@@ -58,6 +58,11 @@
               programs.gofmt.enable = true;
             };
 
+            checks.evalModule = pkgs.callPackage ./tests/eval-module.nix {
+              inherit (inputs) flake-parts nixpkgs;
+              inherit (pkgs.stdenv.hostPlatform) system;
+              kixFlakeModule = flakeModules.default;
+            };
             checks.nixos = pkgs.testers.runNixOSTest ./tests/deploy.nix;
             checks.rotate = pkgs.callPackage ./tests/rotate.nix { kix = self'.packages.kix; };
             checks.pin = pkgs.callPackage ./tests/pin.nix { kix = self'.packages.kix; };
