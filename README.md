@@ -159,12 +159,13 @@ recipient added here cannot read it until whoever maintains that file
 re-encrypts it. `seal` names those secrets when it finishes rather than
 refusing to run.
 
-Re-encrypting reads every source secret, and each one is unwrapped separately.
-With a plugin identity that means one confirmation per secret, on the hardware
-holding the key — a rotation is the one operation whose cost grows with the
-number of secrets you have. `seal` says how many to expect before it starts.
-Interrupting it is safe: nothing is written until every secret has been read,
-and re-running picks up wherever it stopped.
+Re-encrypting reads every source secret, and a plugin identity unwraps each one
+in a process of its own. A PIN is asked for once and remembered for the run. A
+touch is not kix's to remember — the token asks for it however its slot's touch
+policy says, so a policy of `always` is one touch per secret while a cached one
+is usually a single touch for the whole run. `seal` says how many files to
+expect before it starts. Interrupting it is safe: nothing is written until every
+secret has been read, and re-running picks up wherever it stopped.
 
 ### Rotating the identity
 
