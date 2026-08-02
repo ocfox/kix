@@ -95,7 +95,8 @@ let
       };
     };
 
-  profile = (evalFlake host).nixosConfigurations.testhost.config.kix.internal.profile;
+  hostConfig = (evalFlake host).nixosConfigurations.testhost.config;
+  profile = hostConfig.kix.internal.adminProfile;
 
   # A flake whose nodes explode when looked at, to pin down which commands are
   # allowed to look. Editing a secret must not depend on any host evaluating,
@@ -159,6 +160,21 @@ let
       expected = "${src}/secrets/missing.age";
     }
     {
+      # The source .age files are encrypted to the admin identity, which opens
+      # every secret on every host. A host holds nothing that can read one, so
+      # naming them here would ship them wherever the closure goes.
+      name = "the profile a host installs names no source file";
+      actual = lib.attrNames hostConfig.kix.internal.profile.secrets.inSecretsDir;
+      expected = [
+        "beforeUserborn"
+        "group"
+        "mode"
+        "name"
+        "owner"
+        "path"
+      ];
+    }
+    {
       name = "nixosModule points the host at the cache in the flake source";
       actual = profile.cacheInStore;
       expected = builtins.path { path = "${src}/secrets/cache/testhost"; };
@@ -187,6 +203,15 @@ if failed != [ ] then
 else
   runCommandLocal "kix-eval-module" { } ''
     echo "${toString (lib.length checks)} eval assertions passed" > "$out"
+
+    # The assertion above says the projection names no source file; this one
+    # says the file a host actually installs does not, however it was built.
+    if grep -q '\.age' ${hostConfig.kix.internal.profileFile}; then
+      echo "the profile installed on a host names a source .age file:" >&2
+      grep -o '[^"]*\.age' ${hostConfig.kix.internal.profileFile} >&2
+      exit 1
+    fi
+    echo "the installed profile names no source file" >> "$out"
 
     # A wrapper's text can only be read once it is built, so this one cannot
     # live with the assertions above.

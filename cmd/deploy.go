@@ -74,17 +74,28 @@ func runDeploy(profilePath string, earlyMode bool) error {
 		return err
 	}
 
+	// Every entry this host was sealed. Listed once: the source .age files that
+	// named them are deliberately absent here, since nothing on a host can read
+	// what they are encrypted to.
+	entries, err := os.ReadDir(p.CacheInStore)
+	if err != nil {
+		return fmt.Errorf("reading sealed secrets in %q: %w", p.CacheInStore, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+
 	// Decrypt secrets using host key
 	plainMap := make(map[string][]byte)
 	var verifiedIdent age.Identity
 
-	for id, s := range secrets {
-		// Original .age file gives us the hash that names the re-encrypted cache entry
-		original, err := os.ReadFile(s.File)
+	for id := range secrets {
+		name, err := secure.FindCacheEntry(names, id)
 		if err != nil {
-			return fmt.Errorf("reading secret %q (%s): %w", id, s.File, err)
+			return fmt.Errorf("%w: %s was not sealed for this host, or the build is older than the cache", err, id)
 		}
-		encPath := filepath.Join(p.CacheInStore, secure.HashSecret(original, p.HostPubkey))
+		encPath := filepath.Join(p.CacheInStore, name)
 
 		encrypted, err := os.ReadFile(encPath)
 		if err != nil {

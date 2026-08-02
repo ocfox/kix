@@ -148,7 +148,7 @@ in
 
       sealManifest = pkgs.writeText "kix-manifest.json" (
         builtins.toJSON (
-          repoManifest // { profiles = map (n: n.config.kix.internal.profileFile) kixNodes; }
+          repoManifest // { profiles = map (n: n.config.kix.internal.adminProfileFile) kixNodes; }
         )
       );
 
