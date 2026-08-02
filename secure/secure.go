@@ -24,10 +24,14 @@ import (
 //
 // Both inputs matter: the same ciphertext sealed to two hosts must land in two
 // entries, and a changed source must not reuse the old host's entry.
+//
+// The recipient is trimmed first. `kix.hostPubkey` is often a file read by Nix
+// and so ends in a newline, and the same key written inline does not; without
+// this the two spell the same host two ways and reseal everything.
 func HashSecret(content []byte, hostRecipient string) string {
 	h, _ := blake2b.New256(nil)
 	h.Write(content)
-	h.Write([]byte(hostRecipient))
+	h.Write([]byte(strings.TrimSpace(hostRecipient)))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

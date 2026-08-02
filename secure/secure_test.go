@@ -258,3 +258,14 @@ func TestFindCacheEntryIgnoresNamesThatAreNotEntries(t *testing.T) {
 		}
 	}
 }
+
+// `kix.hostPubkey = ./host.pub` reaches us with the newline the file ends in,
+// and the same key written inline does not. One host, one entry.
+func TestHashSecretIgnoresSurroundingWhitespace(t *testing.T) {
+	const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN8x0GNwFpNmVDLBHVJ5tQnFAF7mV8vNBOZ0aQKmm4mm root@host"
+	want := HashSecret([]byte("ciphertext"), key)
+
+	if got := HashSecret([]byte("ciphertext"), key+"\n"); got != want {
+		t.Errorf("a newline-terminated recipient hashed to %q, want %q", got, want)
+	}
+}
