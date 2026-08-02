@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +88,8 @@ func TestIdentityStampX25519UsesTheRecipient(t *testing.T) {
 // stamp comparison and never needs to decrypt anything.
 func refreshStamp(t *testing.T, cache string, id age.Identity) error {
 	t.Helper()
-	return refreshRecipients(&manifest.Manifest{Cache: cache}, id, "", nil, nil)
+	_, err := refreshRecipients(&manifest.Manifest{Cache: cache}, id, "", nil, nil)
+	return err
 }
 
 func writeStampFile(t *testing.T, cache, contents string) {
@@ -241,7 +241,7 @@ func TestRefreshRecipientsResumesAnInterruptedRotation(t *testing.T) {
 	}}}
 	ciphertexts := map[string][]byte{"done": doneCT, "todo": todoCT}
 
-	err := refreshRecipients(
+	_, err := refreshRecipients(
 		&manifest.Manifest{Cache: cache}, newID,
 		writeIdentityFile(t, dir, oldID), profiles, ciphertexts)
 	if err != nil {
@@ -266,47 +266,41 @@ func TestRefreshRecipientsResumesAnInterruptedRotation(t *testing.T) {
 	}
 }
 
-// A secret kix cannot write must stop the run before anything is written, and
-// above all before the stamp claims the new set was applied.
-func TestRefreshRecipientsRefusesUnwritableSourceWithoutTouchingAnything(t *testing.T) {
+// A secret whose file comes from another flake belongs to whoever maintains
+// that flake. It must not block a recipient change here, and it must not go
+// unmentioned either: the recipient just added cannot read it.
+func TestRefreshRecipientsReportsSecretsItDoesNotOwn(t *testing.T) {
 	dir, cache := t.TempDir(), t.TempDir()
-	id := x25519(t)
-	extra := x25519(t).Recipient().String()
+	id, extraID := x25519(t), x25519(t)
 
-	goodPath, goodCT := writeSecret(t, dir, "good.age", "payload", id.Recipient())
-	before, err := os.ReadFile(goodPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stampBefore := (stamp{identity: id.Recipient().String()}).String()
-	writeStampFile(t, cache, stampBefore)
+	ownPath, ownCT := writeSecret(t, dir, "own.age", "payload", id.Recipient())
+	writeStampFile(t, cache, (stamp{identity: id.Recipient().String()}).String())
 
 	profiles := []*profile.Profile{{Secrets: map[string]profile.Secret{
-		"good":    {File: goodPath, SourcePath: goodPath},
-		"outside": {File: "/nix/store/xxxx-source/elsewhere/outside.age"},
+		"own":    {File: ownPath, SourcePath: ownPath},
+		"shared": {File: "/nix/store/xxxx-other-flake/shared.age"},
 	}}}
-	ciphertexts := map[string][]byte{"good": goodCT}
+	ciphertexts := map[string][]byte{"own": ownCT}
 
 	// Same identity, one added recipient: a change that needs no --old-identity.
-	m := &manifest.Manifest{Cache: cache, ExtraRecipients: []string{extra}}
-	err = refreshRecipients(m, id, "", profiles, ciphertexts)
-	if err == nil {
-		t.Fatal("a secret that cannot be re-encrypted was accepted")
-	}
-	if !strings.Contains(err.Error(), "outside") {
-		t.Errorf("error does not name the offending secret: %v", err)
+	m := &manifest.Manifest{Cache: cache, ExtraRecipients: []string{extraID.Recipient().String()}}
+	foreign, err := refreshRecipients(m, id, "", profiles, ciphertexts)
+	if err != nil {
+		t.Fatalf("a secret owned elsewhere blocked the recipient change: %v", err)
 	}
 
-	after, err := os.ReadFile(goodPath)
-	if err != nil {
-		t.Fatal(err)
+	// The one it does own reaches the new recipient.
+	if got := decryptFile(t, ownPath, extraID); got != "payload" {
+		t.Errorf("own.age is %q to the added recipient, want %q", got, "payload")
 	}
-	if !bytes.Equal(before, after) {
-		t.Error("a source file was rewritten even though the run failed")
+
+	if len(foreign) != 1 || !strings.Contains(foreign[0], "shared") {
+		t.Errorf("secrets owned elsewhere were not reported: %v", foreign)
 	}
-	if got := readStampFile(t, cache); got != stampBefore {
-		t.Errorf("stamp claims a recipient set that was never applied: %q", got)
+
+	want := (stamp{identity: id.Recipient().String(), extra: []string{extraID.Recipient().String()}}).String()
+	if got := readStampFile(t, cache); got != want {
+		t.Errorf("stamp is %q, want %q", got, want)
 	}
 }
 

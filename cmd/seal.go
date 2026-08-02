@@ -86,7 +86,8 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 		}
 	}
 
-	if err := refreshRecipients(m, masterID, oldIdentityPath, allProfiles, ciphertexts); err != nil {
+	foreign, err := refreshRecipients(m, masterID, oldIdentityPath, allProfiles, ciphertexts)
+	if err != nil {
 		return err
 	}
 
@@ -206,6 +207,9 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 	}
 
 	slog.Info("seal complete")
+	// After the sealing, so it is what is left on screen rather than what
+	// scrolled off it.
+	reportForeign(foreign)
 	return nil
 }
 
