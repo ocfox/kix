@@ -27,6 +27,53 @@ let
 
   hasEarly = lib.any (s: s.beforeUserborn) (lib.attrValues cfg.secrets);
 
+  # What a host is told about a secret. Deliberately nothing about where the
+  # source .age lives: see `internal.profile`.
+  hostSecret = s: {
+    inherit (s)
+      name
+      path
+      mode
+      owner
+      group
+      beforeUserborn
+      ;
+  };
+
+  # The same, plus the source, for the commands that run where the admin
+  # identity already is.
+  adminSecret =
+    s:
+    let
+      f = toString s.file;
+      prefix = "${cfg.internal.flakeRoot}/";
+      inFlake = cfg.internal.flakeRoot != null && lib.hasPrefix prefix f;
+    in
+    hostSecret s
+    // {
+      # Just this file, never the tree it sits in: a subpath of the flake
+      # source carries the whole source as its context.
+      #
+      # Narrowed here and not in the `file` option itself: `sourcePath` below
+      # reads the path as written, and a store path holding one file no longer
+      # says where in the flake it came from. A path outside the store is left
+      # alone, so pointing `file` there fails where it always did rather than
+      # during evaluation.
+      file =
+        if lib.hasPrefix builtins.storeDir f && builtins.pathExists f then
+          builtins.path { path = f; }
+        else
+          f;
+
+      # Where `file` lives in the working tree, so seal can rewrite it when the
+      # recipient set changes. Anywhere in the flake will do, not just
+      # secretsDir: a path literal in the flake is a subpath of the flake
+      # source, so the working tree copy is the same name under the flake root.
+      # Null for a file that came from somewhere else -- another flake's
+      # secrets are someone else's to re-encrypt.
+      sourcePath = if inFlake then lib.removePrefix prefix f else null;
+    };
+
   secretType = types.submodule (submod: {
     options = {
       name = mkOption {
@@ -229,16 +276,7 @@ in
           inherit dirForUser;
           inherit (cfg.internal) cacheInStore;
           hostKeys = map (k: { inherit (k) path; }) cfg.hostKeys;
-          secrets = lib.mapAttrs (_: s: {
-            inherit (s)
-              name
-              path
-              mode
-              owner
-              group
-              beforeUserborn
-              ;
-          }) cfg.secrets;
+          secrets = lib.mapAttrs (_: hostSecret) cfg.secrets;
         };
       };
 
@@ -252,38 +290,7 @@ in
         readOnly = true;
         type = types.attrs;
         default = cfg.internal.profile // {
-          secrets = lib.mapAttrs (
-            name: s:
-            let
-              f = toString s.file;
-              prefix = "${cfg.internal.flakeRoot}/";
-              inFlake = cfg.internal.flakeRoot != null && lib.hasPrefix prefix f;
-            in
-            cfg.internal.profile.secrets.${name}
-            // {
-              # Just this file, never the tree it sits in: a subpath of the
-              # flake source carries the whole source as its context.
-              #
-              # Narrowed here and not in the `file` option itself: `sourcePath`
-              # below reads the path as written, and a store path holding one
-              # file no longer says where in the flake it came from. A path
-              # outside the store is left alone, so pointing `file` there fails
-              # where it always did rather than during evaluation.
-              file =
-                if lib.hasPrefix builtins.storeDir f && builtins.pathExists f then
-                  builtins.path { path = f; }
-                else
-                  f;
-
-              # Where `file` lives in the working tree, so seal can rewrite it
-              # when the recipient set changes. Anywhere in the flake will do,
-              # not just secretsDir: a path literal in the flake is a subpath of
-              # the flake source, so the working tree copy is the same name under
-              # the flake root. Null for a file that came from somewhere else --
-              # another flake's secrets are someone else's to re-encrypt.
-              sourcePath = if inFlake then lib.removePrefix prefix f else null;
-            }
-          ) cfg.secrets;
+          secrets = lib.mapAttrs (_: adminSecret) cfg.secrets;
         };
       };
 

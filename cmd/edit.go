@@ -166,23 +166,20 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("creating a temporary file next to %q: %w", path, err)
 	}
 	defer os.Remove(tmp.Name())
+	// Closed explicitly below; this one only catches the paths that return
+	// before getting there.
+	defer tmp.Close()
 
-	if err := func() error {
-		if _, err := tmp.Write(data); err != nil {
-			return fmt.Errorf("writing %q: %w", tmp.Name(), err)
-		}
-		if err := tmp.Chmod(perm); err != nil {
-			return fmt.Errorf("chmod %q: %w", tmp.Name(), err)
-		}
-		// The rename is only atomic with respect to the file's contents once
-		// those contents have reached the filesystem.
-		if err := tmp.Sync(); err != nil {
-			return fmt.Errorf("syncing %q: %w", tmp.Name(), err)
-		}
-		return nil
-	}(); err != nil {
-		tmp.Close()
-		return err
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("writing %q: %w", tmp.Name(), err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		return fmt.Errorf("chmod %q: %w", tmp.Name(), err)
+	}
+	// The rename is only atomic with respect to the file's contents once those
+	// contents have reached the filesystem.
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("syncing %q: %w", tmp.Name(), err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing %q: %w", tmp.Name(), err)

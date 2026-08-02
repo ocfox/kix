@@ -215,34 +215,25 @@ type rewrite struct {
 // returned rather than dropped, because a recipient added here still cannot
 // read them, and only the caller knows when saying so will be seen.
 func planRewrites(profiles []*profile.Profile) (plan []rewrite, foreign []string) {
-	var (
-		byPath   = make(map[string][]string)
-		seenBad  = make(map[string]bool)
-		seenPair = make(map[[2]string]bool)
-	)
+	// A secret shared by several hosts is seen once per host, so both lists
+	// collect duplicates and shed them on the way out.
+	byPath := make(map[string][]string)
 	for _, p := range profiles {
 		for id, s := range p.Secrets {
 			if s.SourcePath == "" {
-				if !seenBad[id] {
-					seenBad[id] = true
-					foreign = append(foreign, fmt.Sprintf("%s (%s)", id, s.File))
-				}
+				foreign = append(foreign, fmt.Sprintf("%s (%s)", id, s.File))
 				continue
 			}
-			pair := [2]string{s.SourcePath, id}
-			if seenPair[pair] {
-				continue
-			}
-			seenPair[pair] = true
 			byPath[s.SourcePath] = append(byPath[s.SourcePath], id)
 		}
 	}
 	slices.Sort(foreign)
+	foreign = slices.Compact(foreign)
 
 	plan = make([]rewrite, 0, len(byPath))
 	for path, ids := range byPath {
 		slices.Sort(ids)
-		plan = append(plan, rewrite{sourcePath: path, secretIDs: ids})
+		plan = append(plan, rewrite{sourcePath: path, secretIDs: slices.Compact(ids)})
 	}
 	slices.SortFunc(plan, func(a, b rewrite) int { return strings.Compare(a.sourcePath, b.sourcePath) })
 	return plan, foreign
