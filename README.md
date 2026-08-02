@@ -149,6 +149,13 @@ the header holds one opaque stanza per recipient, so the set has to be
 remembered rather than derived. It contains public keys and fingerprints only,
 and is committed with the cache it describes.
 
+Re-encrypting reads every source secret, and each one is unwrapped separately.
+With a plugin identity that means one confirmation per secret, on the hardware
+holding the key — a rotation is the one operation whose cost grows with the
+number of secrets you have. `seal` says how many to expect before it starts.
+Interrupting it is safe: nothing is written until every secret has been read,
+and re-running picks up wherever it stopped.
+
 ### Rotating the identity
 
 Changing `flake.kix.identity` is the one case `seal` cannot do on its own: the

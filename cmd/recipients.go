@@ -169,39 +169,155 @@ func refreshRecipients(
 		slog.Info("recipient set changed, re-encrypting source secrets")
 	}
 
-	// One source file can appear under several hosts; rewrite each once, then
-	// give every secret that shares it the new ciphertext, or its cache entry
-	// would still be named after the old one.
-	written := make(map[string][]byte)
-	for _, p := range profiles {
-		for id, s := range p.Secrets {
-			if s.SourcePath == "" {
-				slog.Warn("cannot re-encrypt: file is outside secretsDir", "secret", id, "file", s.File)
-				continue
-			}
-			if reencrypted, done := written[s.SourcePath]; done {
-				ciphertexts[id] = reencrypted
-				continue
-			}
+	// Three phases, because this rewrites several files and must not leave the
+	// repository half converted. Planning fails before anything is touched,
+	// decryption carries all of the identity interaction, and the writes then
+	// run back to back with nothing slow in between.
+	plan, err := planRewrites(profiles)
+	if err != nil {
+		return err
+	}
+	if len(plan) == 0 {
+		return writeStamp(stampPath, want)
+	}
 
-			plaintext, err := secure.DecryptAge(ciphertexts[id], decryptID)
-			if err != nil {
-				return fmt.Errorf("decrypting %q for re-encryption: %w", id, err)
-			}
-			reencrypted, err := secure.EncryptAge(plaintext, recips...)
-			if err != nil {
-				return fmt.Errorf("re-encrypting %q: %w", id, err)
-			}
-			if err := os.WriteFile(s.SourcePath, reencrypted, 0o644); err != nil {
-				return fmt.Errorf("writing %q: %w", s.SourcePath, err)
-			}
-			written[s.SourcePath] = reencrypted
-			ciphertexts[id] = reencrypted
-			slog.Info("re-encrypted", "secret", id, "path", s.SourcePath)
-		}
+	slog.Info("re-encrypting source secrets", "files", len(plan))
+	if _, ok := decryptID.(*plugin.Identity); ok {
+		// Worth saying before the prompts start rather than after: a rotation
+		// is the one operation whose cost scales with the number of secrets.
+		slog.Info("each file is unwrapped separately, so the identity may ask for one confirmation per file",
+			"confirmations", len(plan))
+	}
+
+	plaintexts, err := decryptRewrites(plan, ciphertexts, decryptID, masterID)
+	if err != nil {
+		return err
+	}
+
+	if err := writeRewrites(plan, plaintexts, recips, ciphertexts); err != nil {
+		return err
 	}
 
 	return writeStamp(stampPath, want)
+}
+
+// rewrite is one source file to re-encrypt, with every secret that reads it. A
+// file shared by several hosts is rewritten once, and each of those secrets
+// still needs the new ciphertext or its cache entry keeps the old name.
+type rewrite struct {
+	sourcePath string
+	secretIDs  []string
+}
+
+// planRewrites groups the secrets by source file, and refuses the whole run if
+// any of them cannot be written. Reported up front and all at once: a secret
+// whose file lives outside the working tree is a configuration problem, and
+// finding out halfway through leaves some files on the new recipient set and
+// some on the old.
+func planRewrites(profiles []*profile.Profile) ([]rewrite, error) {
+	var (
+		unwritable []string
+		byPath     = make(map[string][]string)
+		seenBad    = make(map[string]bool)
+		seenPair   = make(map[[2]string]bool)
+	)
+	for _, p := range profiles {
+		for id, s := range p.Secrets {
+			if s.SourcePath == "" {
+				if !seenBad[id] {
+					seenBad[id] = true
+					unwritable = append(unwritable, fmt.Sprintf("  %s (%s)", id, s.File))
+				}
+				continue
+			}
+			pair := [2]string{s.SourcePath, id}
+			if seenPair[pair] {
+				continue
+			}
+			seenPair[pair] = true
+			byPath[s.SourcePath] = append(byPath[s.SourcePath], id)
+		}
+	}
+
+	if len(unwritable) > 0 {
+		slices.Sort(unwritable)
+		return nil, fmt.Errorf(
+			"the recipient set changed, but these secrets are read from outside the working tree "+
+				"and cannot be re-encrypted:\n\n%s\n\n"+
+				"point their `file` at a path kix can write, or re-encrypt them yourself; "+
+				"nothing has been changed",
+			strings.Join(unwritable, "\n"))
+	}
+
+	plan := make([]rewrite, 0, len(byPath))
+	for path, ids := range byPath {
+		slices.Sort(ids)
+		plan = append(plan, rewrite{sourcePath: path, secretIDs: ids})
+	}
+	slices.SortFunc(plan, func(a, b rewrite) int { return strings.Compare(a.sourcePath, b.sourcePath) })
+	return plan, nil
+}
+
+// decryptRewrites unwraps every source file once, returning the plaintexts by
+// source path.
+//
+// Serial and once per file for the reason decryptOnce documents: a plugin
+// identity spawns a fresh process per unwrap around a single unsynchronised
+// ClientUI and, often, one piece of hardware.
+//
+// `fallback` absorbs a run that was interrupted partway through the write
+// phase, where some files are already on the new recipient set and cannot be
+// read by the old identity. Trying `decryptID` first keeps that fallback free
+// in the ordinary case, which matters when each attempt costs a confirmation.
+func decryptRewrites(
+	plan []rewrite,
+	ciphertexts map[string][]byte,
+	decryptID, fallback age.Identity,
+) (map[string][]byte, error) {
+	plaintexts := make(map[string][]byte, len(plan))
+	for _, r := range plan {
+		ct := ciphertexts[r.secretIDs[0]]
+		plaintext, err := secure.DecryptAge(ct, decryptID)
+		if err != nil && fallback != decryptID {
+			if alt, altErr := secure.DecryptAge(ct, fallback); altErr == nil {
+				slog.Debug("already re-encrypted by an earlier run", "path", r.sourcePath)
+				plaintext, err = alt, nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decrypting %q for re-encryption: %w", r.sourcePath, err)
+		}
+		plaintexts[r.sourcePath] = plaintext
+	}
+	return plaintexts, nil
+}
+
+// writeRewrites encrypts to the new recipients and writes every source file.
+//
+// Nothing here waits on the user, so the window in which the working tree is
+// half converted is a handful of file writes rather than the whole rotation.
+// Should it still be interrupted, re-running is safe: decryptRewrites reads
+// back whatever each file ended up as.
+func writeRewrites(
+	plan []rewrite,
+	plaintexts map[string][]byte,
+	recips []age.Recipient,
+	ciphertexts map[string][]byte,
+) error {
+	for _, r := range plan {
+		reencrypted, err := secure.EncryptAge(plaintexts[r.sourcePath], recips...)
+		if err != nil {
+			return fmt.Errorf("re-encrypting %q: %w", r.sourcePath, err)
+		}
+		if err := os.WriteFile(r.sourcePath, reencrypted, 0o644); err != nil {
+			return fmt.Errorf("writing %q: %w", r.sourcePath, err)
+		}
+		for _, id := range r.secretIDs {
+			ciphertexts[id] = reencrypted
+		}
+		slog.Info("re-encrypted", "path", r.sourcePath)
+	}
+	return nil
 }
 
 func writeStamp(path string, s stamp) error {

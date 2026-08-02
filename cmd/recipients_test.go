@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"filippo.io/age/plugin"
 
 	"github.com/ocfox/kix/manifest"
+	"github.com/ocfox/kix/profile"
+	"github.com/ocfox/kix/secure"
 )
 
 // pluginIdentity builds a plugin identity without a plugin binary. Only Unwrap
@@ -171,6 +174,139 @@ func TestRefreshRecipientsDoesNotUpgradeLegacyStampToX25519(t *testing.T) {
 	}
 	if err := refreshStamp(t, cache, id); err == nil {
 		t.Error("swapping a plugin identity for an X25519 one went unnoticed")
+	}
+}
+
+func x25519(t *testing.T) *age.X25519Identity {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func writeIdentityFile(t *testing.T, dir string, id *age.X25519Identity) string {
+	t.Helper()
+	path := filepath.Join(dir, "identity.txt")
+	if err := os.WriteFile(path, []byte(id.String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeSecret encrypts contents to r and drops it in dir, returning the path
+// and the ciphertext seal would have read.
+func writeSecret(t *testing.T, dir, name, contents string, r age.Recipient) (string, []byte) {
+	t.Helper()
+	ct, err := secure.EncryptAge([]byte(contents), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, ct, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path, ct
+}
+
+func decryptFile(t *testing.T, path string, id age.Identity) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := secure.DecryptAge(data, id)
+	if err != nil {
+		t.Fatalf("decrypting %q: %v", path, err)
+	}
+	return string(plaintext)
+}
+
+// A rotation interrupted partway through leaves some files on the new identity
+// and some on the old, and the stamp unwritten. Re-running must converge rather
+// than fail on the files it already did.
+func TestRefreshRecipientsResumesAnInterruptedRotation(t *testing.T) {
+	dir, cache := t.TempDir(), t.TempDir()
+	oldID, newID := x25519(t), x25519(t)
+
+	donePath, doneCT := writeSecret(t, dir, "done.age", "already-rotated", newID.Recipient())
+	todoPath, todoCT := writeSecret(t, dir, "todo.age", "not-yet-rotated", oldID.Recipient())
+
+	writeStampFile(t, cache, (stamp{identity: oldID.Recipient().String()}).String())
+
+	profiles := []*profile.Profile{{Secrets: map[string]profile.Secret{
+		"done": {File: donePath, SourcePath: donePath},
+		"todo": {File: todoPath, SourcePath: todoPath},
+	}}}
+	ciphertexts := map[string][]byte{"done": doneCT, "todo": todoCT}
+
+	err := refreshRecipients(
+		&manifest.Manifest{Cache: cache}, newID,
+		writeIdentityFile(t, dir, oldID), profiles, ciphertexts)
+	if err != nil {
+		t.Fatalf("re-running an interrupted rotation failed: %v", err)
+	}
+
+	if got := decryptFile(t, donePath, newID); got != "already-rotated" {
+		t.Errorf("done.age is %q, want %q", got, "already-rotated")
+	}
+	if got := decryptFile(t, todoPath, newID); got != "not-yet-rotated" {
+		t.Errorf("todo.age is %q, want %q", got, "not-yet-rotated")
+	}
+
+	want := (stamp{identity: newID.Recipient().String()}).String()
+	if got := readStampFile(t, cache); got != want {
+		t.Errorf("stamp is %q, want %q", got, want)
+	}
+	for _, id := range []string{"done", "todo"} {
+		if _, err := secure.DecryptAge(ciphertexts[id], newID); err != nil {
+			t.Errorf("ciphertext for %q was not handed back to the rest of the run: %v", id, err)
+		}
+	}
+}
+
+// A secret kix cannot write must stop the run before anything is written, and
+// above all before the stamp claims the new set was applied.
+func TestRefreshRecipientsRefusesUnwritableSourceWithoutTouchingAnything(t *testing.T) {
+	dir, cache := t.TempDir(), t.TempDir()
+	id := x25519(t)
+	extra := x25519(t).Recipient().String()
+
+	goodPath, goodCT := writeSecret(t, dir, "good.age", "payload", id.Recipient())
+	before, err := os.ReadFile(goodPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stampBefore := (stamp{identity: id.Recipient().String()}).String()
+	writeStampFile(t, cache, stampBefore)
+
+	profiles := []*profile.Profile{{Secrets: map[string]profile.Secret{
+		"good":    {File: goodPath, SourcePath: goodPath},
+		"outside": {File: "/nix/store/xxxx-source/elsewhere/outside.age"},
+	}}}
+	ciphertexts := map[string][]byte{"good": goodCT}
+
+	// Same identity, one added recipient: a change that needs no --old-identity.
+	m := &manifest.Manifest{Cache: cache, ExtraRecipients: []string{extra}}
+	err = refreshRecipients(m, id, "", profiles, ciphertexts)
+	if err == nil {
+		t.Fatal("a secret that cannot be re-encrypted was accepted")
+	}
+	if !strings.Contains(err.Error(), "outside") {
+		t.Errorf("error does not name the offending secret: %v", err)
+	}
+
+	after, err := os.ReadFile(goodPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("a source file was rewritten even though the run failed")
+	}
+	if got := readStampFile(t, cache); got != stampBefore {
+		t.Errorf("stamp claims a recipient set that was never applied: %q", got)
 	}
 }
 
