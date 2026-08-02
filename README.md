@@ -71,8 +71,12 @@ In each host, import the pre-wired module rather than `nixosModules.default`:
 
 A secret takes its file from its attribute name: `kix.secrets.my-secret` reads
 `<flake.kix.secretsDir>/my-secret.age`, so `./secrets/my-secret.age` by default.
-Evaluation fails if that file does not exist. Set `file` to point somewhere
-else, keeping in mind that `seal` only re-encrypts sources inside `secretsDir`.
+Declaring one before creating it is fine — the build is what reports it missing,
+and `edit` is what creates it.
+
+`file` points somewhere else. Anywhere in the flake works and `seal` goes on
+maintaining it; a file from outside the flake is one kix can read but never
+rewrite.
 
 The default owner is `root` and the default mode `0400`, which a service running
 as its own user cannot read — set `owner` to the user that needs it.
