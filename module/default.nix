@@ -27,6 +27,16 @@ let
 
   hasEarly = lib.any (s: s.beforeUserborn) (lib.attrValues cfg.secrets);
 
+  # Deployed filenames that more than one secret claims, by name. The two trees
+  # are separate directories, so a name is only contested within one of them.
+  duplicateNames =
+    let
+      claims = lib.groupBy (
+        id: "${lib.optionalString cfg.secrets.${id}.beforeUserborn "early:"}${cfg.secrets.${id}.name}"
+      ) (lib.attrNames cfg.secrets);
+    in
+    lib.filterAttrs (_: ids: lib.length ids > 1) claims;
+
   # What a host is told about a secret. Deliberately nothing about where the
   # source .age lives: see `internal.profile`.
   hostSecret = s: {
@@ -342,7 +352,20 @@ in
             can only be owned by root.
           '';
         }
-      ];
+      ]
+      ++
+        # Two secrets deployed under one filename are written in whichever order
+        # the map is walked, so the one that survives is not the same every
+        # time. Caught here rather than left to differ between activations.
+        map (dup: {
+          assertion = false;
+          message = ''
+            More than one kix secret is deployed as ${dup}: ${
+              lib.concatStringsSep ", " (duplicateNames.${dup})
+            }.
+            Give them different `name`s, or one will overwrite the other.
+          '';
+        }) (lib.attrNames duplicateNames);
 
       # Gates the build without entering the system closure.
       system.checks = [ checkSealed ];
