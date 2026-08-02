@@ -115,9 +115,17 @@ let
       expected = null;
     }
     {
-      name = "file defaults to <secretsDir>/<name>.age";
-      actual = profile.secrets.inSecretsDir.file;
-      expected = "${src}/secrets/inSecretsDir.age";
+      name = "file is narrowed to a store path holding only itself";
+      actual = "${profile.secrets.inSecretsDir.file}";
+      expected = "${builtins.path { path = "${src}/secrets/inSecretsDir.age"; }}";
+    }
+    {
+      # The narrowing above must not be read back out for this: a store path
+      # holding one file cannot say where in the flake it came from, and a
+      # sourcePath of null makes seal treat the secret as someone else's.
+      name = "narrowing file does not cost the working tree path";
+      actual = profile.secrets.inSecretsDir.sourcePath;
+      expected = "secrets/inSecretsDir.age";
     }
     {
       name = "a declared but uncreated secret still evaluates";
