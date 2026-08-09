@@ -57,11 +57,10 @@ func runEdit(file, manifestPath, identityPath string, recipients []string) error
 		return errors.New("no identity: pass --identity or --manifest")
 	}
 
-	idents, err := parseIdentityFile(identityPath, ui, askPassphrase)
+	masterID, err := parseIdentityFile(identityPath, ui, askPassphrase)
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
-	masterID := idents[0]
 
 	ownRecip, _, err := identityRecipient(masterID)
 	if err != nil {

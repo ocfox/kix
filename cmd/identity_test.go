@@ -90,23 +90,44 @@ func TestParseIdentityFileUnlocksAPassphraseIdentityFile(t *testing.T) {
 	path, inner := passphraseIdentityFile(t, "hunter2")
 	var calls int
 
-	ids, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
+	id, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
 	if err != nil {
 		t.Fatalf("parseIdentityFile: %v", err)
 	}
 
-	if len(ids) != 1 {
-		t.Fatalf("got %d identities, want 1", len(ids))
-	}
-	got, ok := ids[0].(*age.X25519Identity)
+	got, ok := id.(*age.X25519Identity)
 	if !ok {
-		t.Fatalf("got identity of type %T, want *age.X25519Identity", ids[0])
+		t.Fatalf("got identity of type %T, want *age.X25519Identity", id)
 	}
 	if got.String() != inner.String() {
 		t.Error("unlocked the wrong identity")
 	}
 	if calls != 1 {
 		t.Errorf("asked for the passphrase %d times, want 1", calls)
+	}
+}
+
+// Refused rather than narrowed to the first, and the error has to point at
+// extraRecipients: wanting a second key to be able to read the sources is why
+// anyone puts two identities in one file.
+func TestParseIdentityFileRefusesSeveralIdentities(t *testing.T) {
+	var lines []string
+	for range 2 {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatalf("GenerateX25519Identity: %v", err)
+		}
+		lines = append(lines, id.String())
+	}
+	path := writeFile(t, "id.txt", []byte(strings.Join(lines, "\n")+"\n"))
+
+	var calls int
+	_, err := parseIdentityFile(path, terminalUI(), asking("", &calls))
+	if err == nil {
+		t.Fatal("parseIdentityFile accepted a file holding two identities")
+	}
+	if !strings.Contains(err.Error(), "extraRecipients") {
+		t.Errorf("error %q does not point at extraRecipients", err)
 	}
 }
 
@@ -131,20 +152,20 @@ func TestIdentityRecipientHandlesSSHKeys(t *testing.T) {
 
 	for _, path := range []string{plain, encrypted} {
 		var calls int
-		ids, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
+		id, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
 		if err != nil {
 			t.Fatalf("parseIdentityFile(%s): %v", path, err)
 		}
-		r, name, err := identityRecipient(ids[0])
+		r, name, err := identityRecipient(id)
 		if err != nil {
-			t.Errorf("identityRecipient(%T): %v", ids[0], err)
+			t.Errorf("identityRecipient(%T): %v", id, err)
 			continue
 		}
 		if r == nil {
-			t.Errorf("identityRecipient(%T) returned no recipient", ids[0])
+			t.Errorf("identityRecipient(%T) returned no recipient", id)
 		}
 		if !strings.HasPrefix(name, "ssh-ed25519 ") {
-			t.Errorf("identityRecipient(%T) named the key %q", ids[0], name)
+			t.Errorf("identityRecipient(%T) named the key %q", id, name)
 		}
 	}
 }
@@ -153,11 +174,7 @@ func TestParseIdentityFileAcceptsAnEncryptedSSHKey(t *testing.T) {
 	path := encryptedSSHKeyFile(t, "hunter2")
 	var calls int
 
-	ids, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls))
-	if err != nil {
+	if _, err := parseIdentityFile(path, terminalUI(), asking("hunter2", &calls)); err != nil {
 		t.Fatalf("parseIdentityFile: %v", err)
-	}
-	if len(ids) != 1 {
-		t.Fatalf("got %d identities, want 1", len(ids))
 	}
 }

@@ -159,11 +159,10 @@ func refreshRecipients(
 					"you must still hold the old identity; nothing else can read those files",
 				have.identity, want.identity)
 		}
-		idents, err := parseIdentityFile(oldIdentityPath, terminalUI(), askPassphrase)
+		decryptID, err = parseIdentityFile(oldIdentityPath, terminalUI(), askPassphrase)
 		if err != nil {
 			return nil, fmt.Errorf("parsing --old-identity: %w", err)
 		}
-		decryptID = idents[0]
 		slog.Info("identity rotated, re-encrypting source secrets", "from", have.identity, "to", want.identity)
 	} else {
 		slog.Info("recipient set changed, re-encrypting source secrets")
