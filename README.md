@@ -47,6 +47,12 @@ a slot on a token:
 flake.kix.identity = inputs.self + "/secrets/age-yubikey-identity-abcd1234.txt";
 ```
 
+That identity is the only key that reads the sources, and the sealed copies
+cannot stand in for it: each one is encrypted to a single host, and a host can
+open nothing but its own. Lose the identity with `extraRecipients` empty and
+every secret has to be generated again. A second key belongs there — one
+identity file holds one identity, and kix refuses a file with more.
+
 In each host, import the pre-wired module — the bare `nixosModules.default`
 throws:
 
