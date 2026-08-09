@@ -58,11 +58,10 @@ func runSeal(manifestPath, oldIdentityPath string) error {
 		return err
 	}
 
-	idents, err := parseIdentityFile(m.Identity, terminalUI(), askPassphrase)
+	masterID, err := parseIdentityFile(m.Identity, terminalUI(), askPassphrase)
 	if err != nil {
 		return fmt.Errorf("parsing identity: %w", err)
 	}
-	masterID := idents[0]
 
 	allProfiles, err := profile.LoadAll(m.Profiles)
 	if err != nil {

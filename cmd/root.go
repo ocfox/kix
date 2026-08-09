@@ -87,7 +87,7 @@ func parseRecipient(s string, ui *plugin.ClientUI) (age.Recipient, error) {
 	// A recipient often reaches us as the contents of a file, by way of
 	// `kix.hostPubkey = ./secrets/host.pub`, and a file ends in a newline.
 	// agessh accepts the trailing whitespace and age's own parser does not,
-	// so without this an age host key works everywhere an SSH one does not.
+	// so without this an SSH host key works everywhere an age one does not.
 	s = strings.TrimSpace(s)
 
 	if strings.HasPrefix(s, "ssh-") {
@@ -106,14 +106,31 @@ func parseRecipient(s string, ui *plugin.ClientUI) (age.Recipient, error) {
 // unlocked, prompt labels the input itself.
 type passphraseFunc func(desc, prompt string) ([]byte, error)
 
-func parseIdentityFile(name string, ui *plugin.ClientUI, ask passphraseFunc) ([]age.Identity, error) {
+// parseIdentityFile reads the single identity kix works with.
+//
+// The file format allows several, and `age-plugin-yubikey --identity` prints
+// one line per configured slot, so this is reachable without going out of your
+// way. It is refused rather than narrowed to the first: the identity that gets
+// read is also the one the sources are encrypted back to, and nothing here can
+// say which of them that should be.
+func parseIdentityFile(name string, ui *plugin.ClientUI, ask passphraseFunc) (age.Identity, error) {
 	f, err := os.Open(name)
 	if err != nil {
 		return nil, fmt.Errorf("opening identities file %q: %w", name, err)
 	}
 	defer f.Close()
 
-	return parseIdentities(bufio.NewReader(f), name, ui, ask)
+	// parseIdentities returns at least one identity or an error.
+	ids, err := parseIdentities(bufio.NewReader(f), name, ui, ask)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) > 1 {
+		return nil, fmt.Errorf("identities file %q holds %d identities and kix uses one: "+
+			"leave the one it should encrypt to, and list the recipients of the others "+
+			"in flake.kix.extraRecipients", name, len(ids))
+	}
+	return ids[0], nil
 }
 
 func parseIdentities(b *bufio.Reader, name string, ui *plugin.ClientUI, ask passphraseFunc) ([]age.Identity, error) {
