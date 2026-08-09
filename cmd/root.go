@@ -87,7 +87,7 @@ func parseRecipient(s string, ui *plugin.ClientUI) (age.Recipient, error) {
 	// A recipient often reaches us as the contents of a file, by way of
 	// `kix.hostPubkey = ./secrets/host.pub`, and a file ends in a newline.
 	// agessh accepts the trailing whitespace and age's own parser does not,
-	// so without this an age host key works everywhere an SSH one does not.
+	// so without this an SSH host key works everywhere an age one does not.
 	s = strings.TrimSpace(s)
 
 	if strings.HasPrefix(s, "ssh-") {
